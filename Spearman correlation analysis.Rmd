@@ -1,0 +1,107 @@
+---
+title: "Correlation analysis"
+output: html_document
+date: "2025-02-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+###SCRIPT FOR SPEARMAN CORRELATION ANALYSIS
+
+```{r}
+# Install
+#if(!require(devtools)) install.packages("devtools")
+#devtools::install_github("kassambara/ggcorrplot")
+library(Hmisc)
+library(corrplot)
+library(RColorBrewer)
+library(ggcorrplot)
+```
+```{r read in data}
+cor_dat <- read.csv("~/Metagenomics/Correlation analysis/correlation_input.csv")
+rownames(cor_dat) <- cor_dat$Sample_ID
+cor_dat <- cor_dat[,-1]
+cor_dat <- na.omit(cor_dat)
+
+#setting factor variables
+cor_dat$Forest <- as.factor(cor_dat$Forest)
+cor_dat$Location <- as.factor(cor_dat$Location)
+```
+#REFINE DATASET VARIABLES
+```{r remove unwanted categories}
+colnames(cor_dat)
+
+keep_variables <- c("Forest", "TC", "TN", "C.N", "d_reciprocal", "AGS_Mbp", "Observed_METABOLIC",  "Shannon_METABOLIC", "Observed_CAZy", "Shannon_CAZy", "Observed_BACTERIA", "Shannon_BACTERIA", "Observed_eggNOG", "Shannon_eggNOG", "Carbon.metabolism", "Nitrogen.cycling", "Carbon.degradation", "Nitrification", "Nitrate.reduction", "Calvin.cycle", "Pyruvate.metabolism", "Photosynthesis", "DC.4HB", "PP.pathway", "rTCA", "Urea.utilization", "X3HP.4HB.cycle", "Methane.metabolism..other", "Cellulose.degradation", "Starch.degradation", "Hemicellulose.degradation", "Galactose.degradation", "D.galacturonate.degradation", "Oxidative.phosphorylation", "Methanogenesis", "Chitin.degradation", "Nitrile.hydration", "Glycolysis...Gluconeogenesis",   "Glyoxylate.cycle", "Pectin.degradation", "Denitrification", "WL.pathway", "D.galactonate.degradation", "Nitrate.assimilation", "Glycoside.Hydrolase", "Carbohydrate.Binding.Module", "GlycosylTransferase", "Auxiliary.Activities", "Polysaccharide.Lyase", "Carbohydrate.Esterase")
+
+cor_dat2 <- cor_dat[,names(cor_dat) %in% keep_variables]
+```
+
+##CORRELATION PLOT
+```{r Correlating all variables}
+correlation_DF <- as.matrix(cor_dat2[,-1])
+correlation_DF <- na.omit(correlation_DF)
+```
+```{r}
+#edit colnames
+colnames(correlation_DF) <- c("Soil %C", "Soil %N", "Soil C/N ratio", "Max. growth rate", "Av. genome size", "Observed: Metabolic", "Shannon: Metabolic", "Observed: CAZy", "Shannon: CAZy", "Observed: Bacteria", "Shannon: Bacteria", "Observed: eggNOG OGs", "Shannon: eggNOG OGs", "C met.", "N cycling", "C deg.", "Nitrification", "Nitrate reduction", "Calvin cycle", "Pyruvate met.", "Photosynthesis", "DC/4HB pathway", "PP pathway", "rTCA", "Urea utilization", "3HP/4HB cycle", "Methane met.", "Cellulose deg.", "Starch deg.", "Hemicellulose deg.", "Galactose deg.", "D galacturonate deg.", "OXPHOS", "Methanogenesis", "Chitin deg.", "Nitrile hydration", "Glycolysis/GNG", "Glyoxylate cycle", "Pectin deg.", "Denitrification", "WL pathway", "D galactonate deg.", "Nitrate assimilation", "GHs [CAZy]", "CBMs [CAZy]", "GTs [CAZy]", "AAs [CAZy]", "PLs [CAZy]", "CEs [CAZy]")
+
+#correlation matrix
+corr_res <- cor(correlation_DF, method = "spearman")
+corr_res.p <- cor_pmat(correlation_DF)
+```
+```{r flatten cor matrix function}
+# ++++++++++++++++++++++++++++
+# flattenCorrMatrix
+# ++++++++++++++++++++++++++++
+# cormat : matrix of the correlation coefficients
+# pmat : matrix of the correlation p-values
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+```
+```{r flatten correlation matrix}
+correlations_DF <- flattenCorrMatrix(corr_res, corr_res.p)
+write.csv(correlations_DF, "~/Metagenomics/phyloseq/Results/correlations_DF.csv")
+```
+
+##focusing on particular variables of interest
+```{r}
+#keeping just C and N genes
+keep_variables2 <- c("Forest", "TC", "TN", "C.N", "d_reciprocal", "AGS_Mbp", "Observed_METABOLIC",  "Shannon_METABOLIC", "Observed_CAZy", "Shannon_CAZy", "Observed_BACTERIA", "Shannon_BACTERIA", "Observed_eggNOG", "Shannon_eggNOG", "Carbon.metabolism", "Nitrogen.cycling", "Carbon.degradation")
+
+cor_dat3 <- cor_dat[,names(cor_dat) %in% keep_variables2]
+correlation_DF2 <- as.matrix(cor_dat3[,-1])
+correlation_DF2 <- na.omit(correlation_DF2)
+```
+```{r edit names}
+colnames(correlation_DF2) <- c("Soil %C", "Soil %N", "Soil C/N ratio", "Maximum growth rate", "Average genome size", "Observed: Metabolic", "Shannon: Metabolic", "Observed: CAZy", "Shannon: CAZy", "Observed: Bacteria", "Shannon: Bacteria", "Observed: eggNOG", "Shannon: eggNOG", "C metabolism genes", "N cycling genes", "C degrading genes")
+```
+```{r}
+#correlation matrix
+corr_res2 <- cor(correlation_DF2, method = "spearman")
+corr_res2.p <- cor_pmat(correlation_DF2)
+```
+
+#plot correlation
+```{r}
+correlation_plot <- ggcorrplot(corr_res2, method = "square", type = "upper", hc.order = TRUE, hc.method = "ward.D",  
+                               p.mat = corr_res2.p,  sig.level = 0.05, insig = "blank", lab_size=4, show.diag = TRUE,
+                               ggtheme = theme_bw(base_size = 15), lab_col = "black", 
+                               legend.title = "Spearman rho", outline.color = "black", tl.cex=12,
+                               colors = c("darkblue", "white", "darkred"), lab = TRUE, digits = 1, tl.col = "black")+
+  theme(element_text(colour = "black"), axis.text = element_text(colour = "black"))
+png("~/Metagenomics/Manuscript/Figures/Corrplot2.png", width = 4500, height = 3500, res = 500)
+correlation_plot2
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -1,0 +1,131 @@
+---
+title: "editing_csv_files"
+author: "Alexa Byers"
+date: "2025-01-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r install packages and load libraries}
+install.packages("FSA")
+install.packages("ggstatsplot")
+
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(FSA)
+library(ggstatsplot)
+```
+
+
+## R Markdown
+
+#This script involves filtering the gene coverage .csv file to retain only genes found in the genome annotation files (metabolic genes, CAZy genes, and eggNOG genes) i.e., remove unannotated genes
+#Contig coverage values were normalised by read depth of sample and scaled by average library size, this is the output from the normalise_contig_coverage.R script
+
+```{r import coverage files}
+contig_coverage <- read.csv("~/Metagenomics/Gene coverage/normalised_coverage_METABOLIC.csv") 
+rownames(contig_coverage) <- contig_coverage$contigName 
+contig_coverage <- contig_coverage[-c(1:2)]
+#edit colnames to reflect sample file ID
+names(contig_coverage) = gsub(pattern = ".bam", replacement = "", x = names(contig_coverage))
+```
+
+##METABOLIC GENES
+```{r import annotated metabolic genes}
+contig_functions_METABOLIC <- read.csv("~/Metagenomics/METABOLIC/METABOLIC_annotations_refined.csv")
+rownames(contig_functions_METABOLIC) <- contig_functions_METABOLIC$Contig
+contig_functions_METABOLIC <- contig_functions_METABOLIC[,-1]
+```
+#filter gene coverage file to retain hits found in METABOLIC annotation
+```{r}
+contigs_keep_METABOLIC <- rownames(contig_functions_METABOLIC)
+contig_coverage_METABOLIC <- contig_coverage[rownames(contig_coverage) %in% contigs_keep_METABOLIC ,]
+write.csv(contig_coverage_METABOLIC, "~/Metagenomics/Gene coverage/gene_coverage_METABOLIC_filtered.csv")
+```
+##subset DRAM annotation file to keep only contigs that could not be annotated by METABOLIC
+```{r read in DRAM annotations dataset}
+DRAM_annotations <- read.csv("~/Metagenomics/DRAM/DRAM_annotations.csv")
+rownames(DRAM_annotations) <- DRAM_annotations$Contig_ID
+```
+```{r remove contigs already annotated by METABOLIC}
+contigs_remove_DRAM <- rownames(contig_functions_METABOLIC)
+DRAM_annotations_filtered <- DRAM_annotations[ ! rownames(DRAM_annotations) %in% contigs_remove_DRAM ,]
+nrow(contig_functions_METABOLIC) #6349 contigs annotated by METABOLIC
+nrow(DRAM_annotations_filtered) #13002 contigs annotated by DRAM
+```
+```{r}
+DRAM_annotations_filtered$Gene_ID <- as.factor(DRAM_annotations_filtered$Gene_ID)
+levels(DRAM_annotations_filtered$Gene_ID)
+write.csv(DRAM_annotations_filtered, "~/Metagenomics/DRAM/DRAM_annotations_filtered.csv")
+```
+
+##COMBINED METABOLIC AND DRAM ANNOTATIONS IN EXCEL. THIS IS THE SPREADSHEET I WILL USE IN THE MAIN ANALYSIS, HOWEVER MAKE IT CLEAR THEY ARE COMING FROM TWO ANNOTATION DATASETS
+```{r}
+contig_functions_MET_DRAM <- read.csv("~/Metagenomics/phyloseq/METABOLIC_DRAM_combined.csv")
+rownames(contig_functions_MET_DRAM) <- contig_functions_MET_DRAM$Contig
+contig_functions_MET_DRAM <- contig_functions_MET_DRAM[,-1]
+```
+```{r}
+contigs_keep_MET_DRAM <- rownames(contig_functions_MET_DRAM)
+contig_coverage_MET_DRAM <- contig_coverage[rownames(contig_coverage) %in% contigs_keep_MET_DRAM ,]
+write.csv(contig_coverage_MET_DRAM, "~/Metagenomics/Gene coverage/gene_coverage_MET_DRAM_filtered.csv")
+write.csv(contig_coverage_MET_DRAM, "~/Metagenomics/phyloseq/gene_coverage_MET_DRAM_filtered.csv")
+```
+##CAZy ANNOTATIONS
+```{r}
+contig_functions_CAZy <- read.csv("~/Metagenomics/dbCAN/dbCAN.csv")
+rownames(contig_functions_CAZy) <- contig_functions_CAZy$Gene.ID
+```
+#filter gene coverage file to retain hits found in METABOLIC annotation
+```{r}
+contigs_keep_CAZy <- rownames(contig_functions_CAZy)
+contig_coverage_CAZy <- contig_coverage[rownames(contig_coverage) %in% contigs_keep_CAZy ,]
+write.csv(contig_coverage_CAZy, "~/Metagenomics/Gene coverage/gene_coverage_CAZy_filtered.csv")
+```
+```{r}
+total_contigs <- as.data.frame(colSums(contig_coverage != 0))
+CAZy_contigs <- as.data.frame(colSums(contig_coverage_CAZy != 0))
+contigs_annotated <- cbind(total_contigs, CAZy_contigs)
+write.csv(contigs_annotated, "~/Metagenomics/phyloseq/contigs_annotated_CAZy.csv")
+```
+
+##EGGNOG GENES
+```{r}
+contig_functions_eggNOG <- read.csv("~/Metagenomics/eggNOG/eggNOG.csv")
+#clean up dataframe
+contig_functions_eggNOG_edit <- contig_functions_eggNOG[-c(3:6, 11, 14:22)] #remove unwanted columns
+colnames(contig_functions_eggNOG_edit) <- c("Contig_ID", "seed_ortholog", "Category", "COG_category",   "Description",    "Preferred_name", "EC", "KEGG_ko") #rename columns
+
+#reorder columns 
+contig_functions_eggNOG_edit <- contig_functions_eggNOG_edit[, c("Contig_ID", "Category", "COG_category",  "seed_ortholog",  "Description", "Preferred_name", "EC", "KEGG_ko")] 
+rownames(contig_functions_eggNOG_edit) <- contig_functions_eggNOG_edit$Contig_ID
+contig_functions_eggNOG_edit$KEGG_ko <- gsub("ko:", "", contig_functions_eggNOG_edit$KEGG_ko)
+contig_functions_eggNOG_edit$KEGG_ko <- gsub(",.*", "",  contig_functions_eggNOG_edit$KEGG_ko)
+contig_functions_eggNOG_edit$KEGG_ko <- gsub("-", "",  contig_functions_eggNOG_edit$KEGG_ko)
+contig_functions_eggNOG_edit$COG_category <- gsub("-", "S",  contig_functions_eggNOG_edit$COG_category)
+head(contig_functions_eggNOG_edit)
+contig_functions_eggNOG_edit$Category <- as.factor(contig_functions_eggNOG_edit$Category)
+```
+```{r filter contigs with eggNOG annotations}
+contigs_keep_eggNOG <- rownames(contig_functions_eggNOG_edit)
+contig_coverage_eggNOG <- contig_coverage[rownames(contig_coverage) %in% contigs_keep_eggNOG ,]
+write.csv(contig_coverage_eggNOG, "~/Metagenomics/Gene coverage/gene_coverage_eggNOG.csv")
+```
+##MAKE PHYLOSEQ OBJECT FOR DIVERSITY ANALYSIS
+```{r convert to ps format}
+eggNOG_gene_coverage = otu_table(contig_coverage_eggNOG, taxa_are_rows = TRUE)
+eggNOG_genes = tax_table(as.matrix(contig_functions_eggNOG_edit[,-1]))
+
+eggNOG_sample_dat <- read.csv("~/Metagenomics/phyloseq/sample_metadata.csv")
+rownames(eggNOG_sample_dat) <- eggNOG_sample_dat$Sample_ID
+eggNOG_sample_dat = sample_data(eggNOG_sample_dat)
+
+eggNOG_physeq = phyloseq(eggNOG_gene_coverage, eggNOG_genes, eggNOG_sample_dat)
+saveRDS(eggNOG_physeq, "~/Metagenomics/phyloseq/eggNOG_ps.rds")#export phyloseq files
+```
+
+
+

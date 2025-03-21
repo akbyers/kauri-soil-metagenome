@@ -1,0 +1,204 @@
+---
+title: "bracken_phyloseq"
+output: html_document
+date: "2024-12-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+##ANALYSIS OF BACTERIAL TAXA FROM KRAKEN AND BRACKEN PERFORMED ACROSS MULTIPLE TAXONOMIC RANKS
+
+```{r INSTALL PACKAGES AND LOAD LIBRARIES}
+BiocManager::install("metagenomeSeq")
+remotes::install_github("vmikk/metagMisc")
+install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+install.packages("ggordiplots")
+
+library(car)
+library(ggplot2)
+library(phyloseq)
+library(vegan)
+library(metagenomeSeq)
+library(metagMisc)
+library(tidyverse)
+library(Rmisc)
+library(reshape2)
+library(ggpubr)
+library(data.table)
+library(devtools)
+library(pairwiseAdonis)
+library(dplyr)
+library(ggordiplots)
+library(pheatmap)
+library(ggConvexHull)
+```
+```{r read in files}
+phylum_asvs <- read.csv("phyloseq_files/bracken_phyla_ASV.csv")
+phylum_taxa <- read.csv("phyloseq_files/bracken_phyla_taxa.csv")
+class_asv <- read.csv("phyloseq_files/bracken_class_ASV.csv")
+class_taxa <- read.csv("phyloseq_files/bracken_class_taxa.csv")
+order_asv <- read.csv("phyloseq_files/bracken_order_ASV.csv")
+order_taxa <- read.csv("phyloseq_files/bracken_order_taxa.csv")
+family_asv <- read.csv("phyloseq_files/bracken_family_ASV.csv")
+family_taxa <- read.csv("phyloseq_files/bracken_family_taxa.csv")
+genus_asvs <- read.csv("phyloseq_files/bracken_genus_ASV.csv")
+genus_taxa <- read.csv("phyloseq_files/bracken_genus_taxa.csv")
+```
+```{r}
+sample_metadata <- read.csv("phyloseq_files/sample_metadata.csv")
+sample_metadata$Forest <- as.factor(sample_metadata$Forest)
+```
+
+#format for phyloseq
+```{r set row names}
+rownames(phylum_asvs) <- phylum_asvs$ASV_ID
+rownames(class_asv) <- class_asv$ASV_ID
+rownames(order_asv) <- order_asv$ASV_ID
+rownames(family_asv) <- family_asv$ASV_ID
+rownames(genus_asvs) <- genus_asvs$ASV_ID
+
+rownames(phylum_taxa) <- phylum_asvs$ASV_ID
+rownames(class_taxa) <- class_taxa$ASV_ID
+rownames(order_taxa) <- order_taxa$ASV_ID
+rownames(family_taxa) <- family_taxa$ASV_ID
+rownames(genus_taxa) <- genus_taxa$ASV_ID
+```
+```{r convert to phyloseq files}
+phylum_ASV <- phyloseq::otu_table(phylum_asvs[,-1:-2], taxa_are_rows = TRUE)
+class_ASV <- phyloseq::otu_table(class_asv[,-1:-2], taxa_are_rows = TRUE)
+order_ASV <- phyloseq::otu_table(order_asv[,-1:-2], taxa_are_rows = TRUE)
+family_ASV <- phyloseq::otu_table(family_asv[,-1:-2], taxa_are_rows = TRUE)
+genus_ASV <- phyloseq::otu_table(genus_asvs[,-1:-2], taxa_are_rows = TRUE)
+
+phylum_TAXA <- phyloseq::tax_table(as.matrix(phylum_taxa[,-1]))
+class_TAXA <- phyloseq::tax_table(as.matrix(class_taxa[,-1]))
+order_TAXA <- phyloseq::tax_table(as.matrix(order_taxa[,-1]))
+family_TAXA <- phyloseq::tax_table(as.matrix(family_taxa[,-1]))
+genus_TAXA <- phyloseq::tax_table(as.matrix(genus_taxa[,-1]))
+
+sample_DATA <- phyloseq::sample_data(sample_metadata)
+sample_names(sample_DATA) <- sample_DATA$Sample_ID
+```
+```{r make phyloseq object}
+phylum_ps <- phyloseq(phylum_ASV, phylum_TAXA, sample_DATA)
+class_ps <- phyloseq(class_ASV, class_TAXA, sample_DATA)
+order_ps <- phyloseq(order_ASV, order_TAXA, sample_DATA)
+family_ps <- phyloseq(family_ASV, family_TAXA, sample_DATA)
+genus_ps <- phyloseq(genus_ASV, genus_TAXA, sample_DATA)
+```
+```{r convert to relative abundance}
+phylum_ps_RA  = transform_sample_counts(phylum_ps, function(x) x / sum(x) *100)
+class_ps_RA  = transform_sample_counts(class_ps, function(x) x / sum(x) *100)
+order_ps_RA  = transform_sample_counts(order_ps, function(x) x / sum(x) *100)
+family_ps_RA  = transform_sample_counts(family_ps, function(x) x / sum(x) *100)
+genus_ps_RA  = transform_sample_counts(genus_ps, function(x) x / sum(x) *100)
+saveRDS(family_ps_RA, "~/Metagenomics/Kraken/family_ps_RA.rds")
+saveRDS(genus_ps_RA, "~/Metagenomics/Kraken/genus_ps_RA.rds")
+saveRDS(genus_ps, "~/Metagenomics/Kraken/genus_ps.rds")
+```
+
+#Diversity analysis on genus-level taxonomic classifications
+```{r rarefy data before alpha and beta diversity analysis}
+min(sample_sums(genus_ps)) #5419870
+genus.rarefied = rarefy_even_depth(genus_ps, rngseed=1, sample.size=5419870, replace=F)
+```
+```{r Calculate alpha diversity}
+alpha_genus <- estimate_richness(genus.rarefied)
+write.csv(alpha_genus, "C:/Users/byersa/OneDrive - Lincoln University/Documents/Rutherford/Metagenomics/Kraken/alpha_genus.csv")
+```
+```{r plot alpha diversity: format data}
+#melt dataframe
+alpha_metadata <- as.data.frame(sample_data(genus.rarefied))
+alpha_genus2 <- cbind(alpha_genus[c(1, 6)], alpha_metadata[,2:3])
+alpha_genus.m <- melt(alpha_genus2)
+#summarise data
+alpha_genus.SE <- summarySE(alpha_genus.m, measurevar = "value", groupvars =c("Forest", "variable"))
+```
+##beta diversity analysis
+```{r beta diversity analysis}
+genus_bray <- phyloseq::distance(genus.rarefied, "bray")
+#permanova tests in vegan
+adonis2(genus_bray ~ alpha_metadata$Forest) 
+#pairwise adonis tests
+pairwise.adonis(genus_bray, alpha_metadata$Forest, sim.function = "vegdist", sim.method = "bray", p.adjust.m = "holm", perm = 999) 
+```
+```{r plotting NMDS}
+#edit names, change order of forests to reflect disturbance gradient
+sample_data(genus.rarefied)$Forest <- factor(sample_data(genus.rarefied)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(genus.rarefied)$Forest)[4] <- "Windy Hill"
+```
+```{r}
+Bacteria.ord <- ordinate(genus.rarefied, "NMDS", "bray")
+```
+```{r}
+Bacteria.ordPlot = plot_ordination(genus.rarefied, Bacteria.ord, type="samples", color="Forest", title = "A) Bacterial genera") +
+geom_point(size=4)+
+geom_convexhull(alpha = 0.6, aes(fill = Forest))+
+theme_bw(base_size = 15)+
+scale_color_brewer(palette = "YlOrRd")+
+scale_fill_brewer(palette = "YlOrRd")
+```
+```{r}
+saveRDS(Bacteria.ordPlot, "~/Metagenomics/phyloseq/Results/Bacteria.ordPlot.rds") #export to combine with other plots in separate R script
+```
+
+#Summarise abundances of taxonomic ranks
+```{r phyla}
+Phyla_Glom <- filter_taxa(phylum_ps_RA, function(x) mean(x) > 0.5, TRUE) #over 0.5% average relative abundance
+Phyla_Glom.df <- psmelt(Phyla_Glom) #melt phyloseq object
+Phyla_Glom.sum <- Phyla_Glom.df %>%
+  group_by(Forest, Phylum) %>%
+  summarize(mean_abund = mean(Abundance, na.rm=FALSE)) #calculate mean abundance of each BGC per forest
+```
+```{r class}
+Class_Glom <- filter_taxa(class_ps_RA, function(x) mean(x) > 0.5, TRUE) #over 0.5% average relative abundance
+Class_Glom.df <- psmelt(Class_Glom) #melt phyloseq object
+Class_Glom.sum <- Class_Glom.df %>%
+  group_by(Forest, Class) %>%
+  summarize(mean_abund = mean(Abundance, na.rm=FALSE)) #calculate mean abundance of each BGC per forest
+```
+```{r order}
+Order_Glom <- filter_taxa(order_ps_RA, function(x) mean(x) > 2, TRUE) #over 2% average relative abundance
+Order_Glom.df <- psmelt(Order_Glom) #melt phyloseq object
+Order_Glom.sum <- Order_Glom.df %>%
+  group_by(Forest, Order) %>%
+  summarize(mean_abund = mean(Abundance, na.rm=FALSE)) #calculate mean abundance of each BGC per forest
+```
+```{r family}
+Family_Glom <- filter_taxa(family_ps_RA, function(x) mean(x) > 2, TRUE) #over 2% average relative abundance
+Family_Glom.df <- psmelt(Family_Glom) #melt phyloseq object
+Family_Glom.sum <- Family_Glom.df %>%
+  group_by(Forest, Family) %>%
+  summarize(mean_abund = mean(Abundance, na.rm=FALSE)) #calculate mean abundance of each BGC per forest
+```
+```{r}
+Genus_Glom = filter_taxa(genus_ps_RA, function(x) sum(x > 0.5) > (0.2*length(x)), TRUE) #remove taxa with sum less 1% and observed in less than 3 samples
+Genus_Glom.df <- psmelt(Genus_Glom) #melt phyloseq object
+Genus_Glom.sum <- Genus_Glom.df %>%
+  group_by(Forest, Location, Genus) %>%
+  summarize(mean_abund = mean(Abundance, na.rm=FALSE)) #calculate mean abundance of each BGC per forest
+```
+
+##EXPORTING DATA IN WIDE FORMAT
+```{r convert to wide format, warning=FALSE}
+Phyla_Glom.sum2 <- dcast(Phyla_Glom.sum, Phylum ~ Forest, value.var = "mean_abund")
+Class_Glom.sum2 <- dcast(Class_Glom.sum, Class ~ Forest, value.var = "mean_abund")
+Order_Glom.sum2 <- dcast(Order_Glom.sum, Order ~ Forest, value.var = "mean_abund")
+Family_Glom.sum2 <- dcast(Family_Glom.sum, Family ~ Forest, value.var = "mean_abund")
+Genus_Glom.sum2 <- dcast(Genus_Glom.sum, Genus ~ Forest, value.var = "mean_abund")
+write.csv(Genus_Glom.sum2, "genus_RA_sum.csv")
+
+all_taxa_levels_sum <- rbindlist(list(Phyla_Glom.sum2, Class_Glom.sum2, Order_Glom.sum2, Family_Glom.sum2, Genus_Glom.sum2), use.names="FALSE")
+write.csv(all_taxa_levels_sum, "all_taxa_levels_sum.csv")
+```
+
+##statisitical tests for alpha and beta diversity were performed in separate script
+##differential abundance analysis using ANCOMBC2 was performed in a separate script
+
+
+
+

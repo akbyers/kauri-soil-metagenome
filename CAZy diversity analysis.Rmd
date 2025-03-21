@@ -1,0 +1,138 @@
+---
+title: "CAZy genes"
+output: html_document
+date: "2025-02-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+##Alpha and beta diversity analysis of CAZy genes
+```{r load libraries}
+library(dplyr)
+library(phyloseq)
+library(ggplot2)
+library(reshape2)
+library(Rmisc)
+library(vegan)
+library(devtools)
+library(pairwiseAdonis)
+library(scales)
+library(ggpubr)
+library(ggordiplots)
+library(RColorBrewer)
+library(rcompanion)
+library(multcompView)
+library(ANCOMBC)
+library(tidyverse)
+library(DT)
+library(Hmisc)
+library(corrplot)
+library(ggcorrplot)
+library(metagMisc)
+```
+```{r load data}
+contig_functions_CAZy <- read.csv("~/Metagenomics/dbCAN/dbCAN.csv")
+rownames(contig_functions_CAZy) <- contig_functions_CAZy$Gene.ID
+contig_functions_CAZy <- contig_functions_CAZy[,-1]
+contigs_CAZy <- read.csv("~/Metagenomics/Gene coverage/gene_coverage_CAZy_filtered.csv")
+sample_dat <- read.csv("~/Metagenomics/phyloseq/sample_metadata.csv")
+```
+```{r format data for phyloseq}
+rownames(contigs_CAZy) <- contigs_CAZy$X
+rownames(sample_dat) <- sample_dat$Sample_ID
+```
+```{r convert to ps format}
+coverage_CAZy = otu_table(contigs_CAZy[,-1], taxa_are_rows = TRUE)
+functions_CAZy = tax_table(as.matrix(contig_functions_CAZy))
+taxa_names(functions_CAZy) <- rownames(contig_functions_CAZy)
+
+sample_dat = sample_data(sample_dat)
+CAZy_genes_physeq = phyloseq(coverage_CAZy, functions_CAZy, sample_dat)#10876 genes and 90 samples
+```
+```{r}
+#inspect phyloseq object
+head(rank_names(CAZy_genes_physeq))
+```
+```{r merge contigs by gene and KO number}
+CAZy_GLOM <- tax_glom(CAZy_genes_physeq, taxrank = "Family") #215 genes and 90 samples
+taxa_names(CAZy_GLOM) <- tax_table(CAZy_GLOM)[,2]
+saveRDS(CAZy_GLOM, "~/Metagenomics/phyloseq/CAZy_GLOM.rds")#export phyloseq files
+```
+##alpha diversity
+```{r calculate alpha diversity}
+CAZy_GLOM.r = transform_sample_counts(CAZy_GLOM, round) #round counts
+CAZy_GLOM.alpha = estimate_richness(CAZy_GLOM.r)
+#export alpha diversity
+write.csv(CAZy_GLOM.alpha, "~/Metagenomics/phyloseq/Results/CAZy_alpha.csv")
+```
+##beta diversity
+```{r beta diversity analysis}
+cazy_bray <- phyloseq::distance(CAZy_GLOM, "bray")#using non-rounded counts
+#permanova tests in vegan
+adonis2(cazy_bray ~ sampleDat_all$Forest) 
+pairwise.adonis(cazy_bray, sampleDat_all$Forest, sim.function = "vegdist", sim.method = "bray", p.adjust.m = "holm", perm = 999) #pairwise adonis tests
+```
+```{r plotting NMDS}
+#edit names, change order of forests
+sample_data(CAZy_GLOM)$Forest <- factor(sample_data(CAZy_GLOM)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(CAZy_GLOM)$Forest)[4] <- "Windy Hill"
+```
+```{r}
+cazyGenes.ord <- ordinate(CAZy_GLOM, "NMDS", "bray")
+```
+```{r}
+cazyGenes.ordPlot = plot_ordination(CAZy_GLOM, cazyGenes.ord, type="samples", color="Forest", title = "D) CAZy gene families") +
+geom_point(size=4)+
+geom_convexhull(alpha = 0.6, aes(fill = Forest))+
+theme_bw(base_size = 15)+    
+theme(axis.title = element_text(size = 12))+
+scale_color_brewer(palette = "YlOrRd")+
+scale_fill_brewer(palette = "YlOrRd")
+
+##export ordination plot for combining with other plots
+saveRDS(cazyGenes.ordPlot, "~/Metagenomics/phyloseq/Results/cazyGenes.ordPlot.rds")
+```
+
+##CALCULATE AND PLOT RELATIVE ABUNDANCES OF CAZY ENZYME CLASSES
+```
+##abundances of cazy gene classes
+```{r convert to relative abundance}
+CAZy_genes_RA = transform_sample_counts(CAZy_genes_physeq, function(x) x / sum(x) *100)
+```
+```{r}
+CAZy_GLOM_EC <- tax_glom(CAZy_genes_RA, taxrank = "Enzyme_Class") #6 classes and 90 samples
+#set forest order
+sample_data(CAZy_GLOM_EC)$Forest <- factor(sample_data(CAZy_GLOM_EC)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(CAZy_GLOM_EC)$Forest)[4] <- "Windy Hill"
+```
+```{r}
+CAZy_Glom.df <- psmelt(CAZy_GLOM_EC) #melt phyloseq object
+CAZy_Glom.sum <- CAZy_Glom.df %>%
+  dplyr::group_by(Forest, Enzyme_Class) %>%
+  dplyr::summarize(mean_abund = mean(Abundance, na.rm=FALSE)) 
+```
+```{r}
+CAZy_Glom_plot <- ggplot(CAZy_Glom.sum, aes(fill=reorder(Enzyme_Class, +mean_abund), y=mean_abund, x=Forest)) + 
+  geom_bar(position="stack", stat="identity")+
+  theme_bw(base_size = 15)+ 
+  theme(axis.text.y = element_text(colour = "black", size = 12),
+  axis.text.x = element_text(colour = "black", size = 12),
+  axis.title.x = element_text(size = 12),
+  legend.position = "right",
+  legend.text = element_text(size = 12),
+  legend.key.size = unit(0.6, "cm"),
+  legend.justification = "left",
+  legend.box.margin = margin(l = 1, unit = "cm"),
+  legend.title = element_text(size = 14))+
+  xlab("")+
+  ylab("Relative abundance (%)")+
+  geom_col(color = "black")+ 
+  guides(fill=guide_legend(title="CAZy enzyme class", ncol = 1))+ 
+  scale_y_continuous(n.breaks = 10, limits = c(0, 100))
+CAZy_Glom_plot2 <- CAZy_Glom_plot + coord_flip() + scale_x_discrete(limits=rev)
+```
+
+

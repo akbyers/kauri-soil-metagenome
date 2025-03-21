@@ -1,0 +1,482 @@
+---
+title: "METABOLIC_analysis"
+author: "Alexa Byers"
+date: "2025-01-13"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+##PRIMARY SCRIPT FOR ANALYSIS
+## ALPHA AND BETA DIVERSITY ANALYSIS OF MICROBIAL TAXA AND FUNCTIONAL GENES, INCLUDING STATISTICAL TESTS AND PLOTS
+
+```{r installing packages}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("phyloseq")
+devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+BiocManager::install("ANCOMBC")
+BiocManager::install("microbiome")
+devtools::install_github("cmartin/ggConvexHull")
+```
+```{r load libraries, message=FALSE, warning=FALSE}
+library(dplyr)
+library(phyloseq)
+library(ggplot2)
+library(reshape2)
+library(Rmisc)
+library(vegan)
+library(devtools)
+library(pairwiseAdonis)
+library(scales)
+library(ggpubr)
+library(ggordiplots)
+library(RColorBrewer)
+library(rcompanion)
+library(multcompView)
+library(ANCOMBC)
+library(tidyverse)
+library(DT)
+library(ggConvexHull)
+library(pheatmap)
+library(ggsankey)
+```
+```{r set colour scheme}
+mycolors = c(brewer.pal(name="Set1", n = 4), brewer.pal(name="Dark2", n = 8))
+```
+# Step 1 - Make phyloseq object for data processing, handling, and analysis
+
+#IMPORT DATASET OF METABOLIC GENES
+```{r import data files}
+gene_coverage <- read.csv("~/Metagenomics/Gene coverage/gene_coverage_MET_DRAM_filtered.csv")
+functional_genes <- read.csv("~/Metagenomics/phyloseq/METABOLIC_DRAM_combined.csv")
+sample_dat <- read.csv("~/Metagenomics/phyloseq/sample_metadata.csv")
+
+rownames(gene_coverage) <- gene_coverage$X
+rownames(functional_genes) <- functional_genes$Contig
+rownames(sample_dat) <- sample_dat$Sample_ID
+```
+```{r convert to ps format}
+gene_coverage = otu_table(gene_coverage[,-1], taxa_are_rows = TRUE)
+functional_genes = tax_table(as.matrix(functional_genes[-c(1,3,5)]))
+sample_dat = sample_data(sample_dat)
+Functional_genes_physeq = phyloseq(gene_coverage, functional_genes, sample_dat)#23511 taxa and 90 samples
+```
+```{r}
+#inspect phyloseq object
+head(rank_names(Functional_genes_physeq))
+```
+```{r merge contigs by gene and KO number}
+Functional_genes_GLOM <- tax_glom(Functional_genes_physeq, taxrank = "KO_gene")
+taxa_names(Functional_genes_GLOM) <- tax_table(Functional_genes_GLOM)[,5]
+saveRDS(Functional_genes_GLOM, "~/Metagenomics/phyloseq/Functional_genes_physeq.rds")#export phyloseq files
+```
+# 1. Alpha diversity analysis of all biogeochemical cycling genes
+```{r calculate alpha diversity}
+Functional_genes_GLOM.r = transform_sample_counts(Functional_genes_GLOM, round) #round counts
+Functional_genes_GLOM.alpha = estimate_richness(Functional_genes_GLOM.r)
+```
+```{r edit alpha diversity dataframe}
+sampleDat_all <- as.matrix(Functional_genes_GLOM.r@sam_data)
+sampleDat_all <- as.data.frame(sampleDat_all)#export to dataframe
+
+genes_all_alpha <- cbind(Functional_genes_GLOM.alpha, sampleDat_all) #bind dataframes
+genes_all_alpha <- genes_all_alpha[c(1, 6, 11:20)]
+
+genes_all_alpha$Forest <- as.factor(genes_all_alpha$Forest)
+genes_all_alpha$DB_symptomatic <- as.factor(genes_all_alpha$DB_symptomatic)
+genes_all_alpha$Location <- as.factor(genes_all_alpha$Location)
+genes_all_alpha <- genes_all_alpha %>% mutate_if(is.character, as.numeric)
+
+write.csv(genes_all_alpha, "~/Metagenomics/phyloseq/Results/genes_all_alpha.csv") #export results
+```
+```{r melt and summarise alpha diversity DF}
+genes_all_alpha.m <- melt(genes_all_alpha[,1:5])
+genes_all_alpha.se <- summarySE(genes_all_alpha.m, measurevar = "value", groupvars =c("Forest","Location","variable"))
+genes_all_alpha.se$Forest <- as.factor(genes_all_alpha.se$Forest)
+genes_all_alpha.se$Location <- as.factor(genes_all_alpha.se$Location)
+```
+
+##PLOTTING ALPHA DIVERSITY
+```{r add in CAZy data}
+CAZy_GLOM.alpha <- read.csv("~/Metagenomics/phyloseq/Results/CAZy_alpha.csv")
+rownames(CAZy_GLOM.alpha) <- CAZy_GLOM.alpha$X
+CAZy_GLOM.alpha <- CAZy_GLOM.alpha[c(2,7)]
+colnames(CAZy_GLOM.alpha) <- c("Observed_CAZy", "Shannon_CAZy")
+```
+```{r add in eggNOG data}
+eggnog_GLOM.alpha <- read.csv("~/Metagenomics/phyloseq/Results/eggnog_alpha.csv")
+eggnog_GLOM.alpha2 <- eggnog_GLOM.alpha[c(1,6)]
+colnames(eggnog_GLOM.alpha2) <- c("Observed_eggNOG", "Shannon_eggNOG")
+```
+```{r merge dataframes}
+genes_all_alpha <- cbind(genes_all_alpha, CAZy_GLOM.alpha, eggnog_GLOM.alpha2)
+#export for correlation analysis later on
+write.csv(genes_all_alpha, "~/Metagenomics/Correlation analysis/genes_all_alpha.csv")
+```
+#set order to reflect disturbance gradient
+```{r}
+genes_all_alpha$Forest <- factor(genes_all_alpha$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(genes_all_alpha$Forest)[4] <- "Windy Hill"
+genes_all_alpha$Location <- as.factor(genes_all_alpha$Location)
+```
+
+##KW TESTS, METABOLIC GENES
+```{r kruskal wallis of alpha diversity, warning=FALSE}
+#Shannon
+kruskal.test(genes_all_alpha$Shannon, genes_all_alpha$Forest) #Forest site
+Shannon_wilcox <- pairwise.wilcox.test(genes_all_alpha$Shannon, genes_all_alpha$Forest, p.adjust.method = "holm")
+#generate compact letter display
+Shannon_wilcox.matrix = fullPTable(Shannon_wilcox$p.value) 
+multcompLetters(Shannon_wilcox.matrix)
+
+#Observed
+kruskal.test(genes_all_alpha$Observed, genes_all_alpha$Forest) #Forest site
+Observed_wilcox <- pairwise.wilcox.test(genes_all_alpha$Observed, genes_all_alpha$Forest, p.adjust.method = "holm")
+#generate compact letter display
+Observed_wilcox.Matrix = fullPTable(Observed_wilcox$p.value) 
+multcompLetters(Observed_wilcox.Matrix)
+wilcox.test(Observed ~ Location, data = genes_all_alpha) #Offshore vs mainland
+```
+
+##KW TESTS, BACTERIAL GENERA
+```{r alpha diversity bacterial genera}
+#Shannon
+kruskal.test(genes_all_alpha$Shannon.1, genes_all_alpha$Forest) #Forest site
+Shannon_wilcox.1 <- pairwise.wilcox.test(genes_all_alpha$Shannon.1, genes_all_alpha$Forest, p.adjust.method = "holm")
+#generate compact letter display
+Shannon_wilcox.matrix.1 = fullPTable(Shannon_wilcox.1$p.value) 
+multcompLetters(Shannon_wilcox.matrix.1)
+
+#Observed
+kruskal.test(genes_all_alpha$Observed.1, genes_all_alpha$Forest) #Forest site
+Observed_wilcox.1 <- pairwise.wilcox.test(genes_all_alpha$Observed.1, genes_all_alpha$Forest, p.adjust.method = "holm")
+#generate compact letter display
+Observed_wilcox.Matrix.1 = fullPTable(Observed_wilcox.1$p.value) 
+multcompLetters(Observed_wilcox.Matrix.1)
+```
+
+##KW TESTS, CAZY GENES
+```{r alpha diversity cazy genes}
+#Shannon
+kruskal.test(genes_all_alpha$Shannon_CAZy, genes_all_alpha$Forest) #Forest site
+Shannon_wilcox.CAZ <- pairwise.wilcox.test(genes_all_alpha$Shannon_CAZy, genes_all_alpha$Forest, p.adjust.method = "holm")
+#generate compact letter display
+Shannon_wilcox.matrix.CAZ = fullPTable(Shannon_wilcox.CAZ$p.value) 
+multcompLetters(Shannon_wilcox.matrix.CAZ)
+
+#Observed
+kruskal.test(genes_all_alpha$Observed_CAZy, genes_all_alpha$Forest) #Forest site
+Observed_wilcox.CAZ <- pairwise.wilcox.test(genes_all_alpha$Observed_CAZy, genes_all_alpha$Forest, p.adjust.method = "holm")
+#generate compact letter display
+Observed_wilcox.Matrix.CAZ = fullPTable(Observed_wilcox.CAZ$p.value) 
+multcompLetters(Observed_wilcox.Matrix.CAZ)
+```
+
+##KW TESTS, EGGNOG GENES
+```{r alpha diversity eggNOG genes}
+#Shannon
+kruskal.test(genes_all_alpha$Shannon_eggNOG, genes_all_alpha$Forest) #Forest site
+Shannon_wilcox.eggNOG <- pairwise.wilcox.test(genes_all_alpha$Shannon_eggNOG, genes_all_alpha$Forest, p.adjust.method = "holm")
+#generate compact letter display
+Shannon_wilcox.matrix.eggNOG = fullPTable(Shannon_wilcox.eggNOG$p.value) 
+multcompLetters(Shannon_wilcox.matrix.eggNOG)
+
+#Observed
+kruskal.test(genes_all_alpha$Observed_eggNOG, genes_all_alpha$Forest) #Forest site
+Observed_wilcox.eggnog <- pairwise.wilcox.test(genes_all_alpha$Observed_eggNOG, genes_all_alpha$Forest, p.adjust.method = "holm")
+#generate compact letter display
+Observed_wilcox.Matrix.eggnog = fullPTable(Observed_wilcox.eggnog$p.value) 
+multcompLetters(Observed_wilcox.Matrix.eggnog)
+```
+
+#PLOT BIOGEOCHEMICAL CYCLING GENES
+```{r plot Observed genes biogeochem}
+alpha_Observed <- ggplot(data=genes_all_alpha, aes(y=Forest, x=Observed, group=Forest, color=Forest)) +
+  geom_violin(aes(fill=Forest), color="black", scale = "width")+
+  stat_boxplot(geom = "errorbar", width = 0.5, color="black")+
+  stat_summary(fun=mean, geom="point", shape=21, size=3, color="black", fill="black") +
+  theme_bw(base_size = 15)+
+  xlab("Observed: Metabolic genes")+
+  theme(axis.text.y = element_text(colour = "black", size = 10),
+  axis.text.x = element_text(colour = "black", size = 8),
+  axis.title.x = element_text(size = 12))+
+  ylab("")+
+  scale_fill_brewer(palette = "YlOrRd")+
+  scale_x_continuous(n.breaks = 10, limits = c(360, 520))+
+  annotate("text", x = 520, y=9, label= "a", size=4)+ #these need to be in reverse order for when you flip the y axis
+  annotate("text", x = 520, y=8, label= "a", size=4)+
+  annotate("text", x = 520, y=7, label= "b", size=4)+
+  annotate("text", x = 520, y=6, label= "cd", size=4)+
+  annotate("text", x = 520, y=5, label= "ce", size=4)+
+  annotate("text", x = 520, y=4, label= "ae", size=4)+
+  annotate("text", x = 520, y=3, label= "d", size=4)+
+  annotate("text", x = 520, y=2, label= "bd", size=4)+
+  annotate("text", x = 520, y=1, label= "f", size=4)+
+  labs(caption="KW Chi-sq=76.78, p<0.001") +
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0))
+alpha_Observed_metabolic <- alpha_Observed + scale_y_discrete(limits=rev)
+```
+```{r plot Shannon diversity biogeochem}
+alpha_Shannon <- ggplot(data=genes_all_alpha, aes(y=Forest, x=Shannon, group=Forest, color=Forest)) +
+  geom_violin(aes(fill=Forest), color="black", scale = "width")+
+  stat_boxplot(geom = "errorbar", width = 0.5, color="black")+
+  stat_summary(fun=mean, geom="point", shape=21, size=3, color="black", fill="black") +
+  theme_bw(base_size = 15)+
+  xlab("Shannon: Metabolic genes")+
+  theme(axis.text.y = element_text(colour = "black", size = 10),
+  axis.text.x = element_text(colour = "black", size = 8),
+  axis.title.x = element_text(size = 12))+
+  ylab("")+
+  scale_fill_brewer(palette = "YlOrRd")+
+  scale_x_continuous(n.breaks = 10, limits = c(5.45, 5.7))+
+  annotate("text", x = 5.7, y=9, label= "ab", size=4)+
+  annotate("text", x = 5.7, y=8, label= "abc", size=4)+
+  annotate("text", x = 5.7, y=7, label= "a", size=4)+
+  annotate("text", x = 5.7, y=6, label= "ab", size=4)+
+  annotate("text", x = 5.7, y=5, label= "d", size=4)+
+  annotate("text", x = 5.7, y=4, label= "de", size=4)+
+  annotate("text", x = 5.7, y=3, label= "c", size=4)+
+  annotate("text", x = 5.7, y=2, label= "be", size=4)+
+  annotate("text", x = 5.7, y=1, label= "bde", size=4)+
+  labs(caption="KW Chi-sq=60.96, p<0.001") +
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0))
+alpha_Shannon_metabolic <- alpha_Shannon + scale_y_discrete(limits=rev)
+```
+#PLOT BACTERIAL GENERA
+```{r plot Observed bacterial genera}
+alpha_Observed_a <- ggplot(data=genes_all_alpha, aes(y=Forest, x=Observed.1, group=Forest, color=Forest)) +
+  geom_violin(aes(fill=Forest), color="black", scale = "width")+
+  stat_boxplot(geom = "errorbar", width = 0.5, color="black")+
+  stat_summary(fun=mean, geom="point", shape=21, size=3, color="black", fill="black") +
+  theme_bw(base_size = 15)+
+  xlab("Observed: Bacterial genera")+
+  theme(axis.text.y = element_text(colour = "black", size = 10),
+  axis.text.x = element_text(colour = "black", size = 8),
+  axis.title.x = element_text(size = 12))+
+  ylab("")+
+  scale_fill_brewer(palette = "YlOrRd")+
+  scale_x_continuous(n.breaks = 10, limits = c(1100, 1180))+
+  annotate("text", x = 1180, y=9, label= "ab", size=4)+
+  annotate("text", x = 1180, y=8, label= "ab", size=4)+
+  annotate("text", x = 1180, y=7, label= "c", size=4)+
+  annotate("text", x = 1180, y=6, label= "ac", size=4)+
+  annotate("text", x = 1180, y=5, label= "ac", size=4)+
+  annotate("text", x = 1180, y=4, label= "ab", size=4)+
+  annotate("text", x = 1180, y=3, label= "c", size=4)+
+  annotate("text", x = 1180, y=2, label= "ac", size=4)+
+  annotate("text", x = 1180, y=1, label= "b", size=4)+
+  labs(caption="KW Chi-sq=58.11, p<0.001") +
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0))
+alpha_Observed_bacteria <- alpha_Observed_a + scale_y_discrete(limits=rev)
+```
+```{r plot Observed bacterial genera}
+alpha_Shannon_a <- ggplot(data=genes_all_alpha, aes(y=Forest, x=Shannon.1, group=Forest, color=Forest)) +
+  geom_violin(aes(fill=Forest), color="black", scale = "width")+
+  stat_boxplot(geom = "errorbar", width = 0.5, color="black")+
+  stat_summary(fun=mean, geom="point", shape=21, size=3, color="black", fill="black") +
+  theme_bw(base_size = 15)+
+  xlab("Shannon: Bacterial genera")+
+  theme(axis.text.y = element_text(colour = "black", size = 10),
+  axis.text.x = element_text(colour = "black", size = 8),
+  axis.title.x = element_text(size = 12))+
+  ylab("")+
+  scale_fill_brewer(palette = "YlOrRd")+
+  scale_x_continuous(n.breaks = 10, limits = c(4.4, 5.35))+
+  annotate("text", x = 5.35, y=9, label= "a", size=4)+
+  annotate("text", x = 5.35, y=8, label= "ab", size=4)+
+  annotate("text", x = 5.35, y=7, label= "c", size=4)+
+  annotate("text", x = 5.35, y=6, label= "c", size=4)+
+  annotate("text", x = 5.35, y=5, label= "c", size=4)+
+  annotate("text", x = 5.35, y=4, label= "d", size=4)+
+  annotate("text", x = 5.35, y=3, label= "c", size=4)+
+  annotate("text", x = 5.35, y=2, label= "c", size=4)+
+  annotate("text", x = 5.35, y=1, label= "b", size=4)+
+  labs(caption="KW Chi-sq=69.79, p<0.001") +
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0))
+alpha_Shannon_bacteria <- alpha_Shannon_a + scale_y_discrete(limits=rev)
+```
+##PLOT CAZY FAMILIES
+```{r plot Observed genes biogeochem}
+alpha_Observed_b <- ggplot(data=genes_all_alpha, aes(y=Forest, x=Observed_CAZy, group=Forest, color=Forest)) +
+  geom_violin(aes(fill=Forest), color="black", scale = "width")+
+  stat_boxplot(geom = "errorbar", width = 0.5, color="black")+
+  stat_summary(fun=mean, geom="point", shape=21, size=3, color="black", fill="black") +
+  theme_bw(base_size = 15)+
+  xlab("Observed: CAZy genes")+
+  theme(axis.text.y = element_text(colour = "black", size = 10),
+  axis.text.x = element_text(colour = "black", size = 8),
+  axis.title.x = element_text(size = 12))+
+  ylab("")+
+  scale_fill_brewer(palette = "YlOrRd")+
+  scale_x_continuous(n.breaks = 10, limits = c(95, 190))+
+  annotate("text", x = 190, y=9, label= "a", size=4)+
+  annotate("text", x = 190, y=8, label= "b", size=4)+
+  annotate("text", x = 190, y=7, label= "c", size=4)+
+  annotate("text", x = 190, y=6, label= "d", size=4)+
+  annotate("text", x = 190, y=5, label= "b", size=4)+
+  annotate("text", x = 190, y=4, label= "ab", size=4)+
+  annotate("text", x = 190, y=3, label= "d", size=4)+
+  annotate("text", x = 190, y=2, label= "d", size=4)+
+  annotate("text", x = 190, y=1, label= "e", size=4)+
+  labs(caption="KW Chi-sq=60.58, p<0.001") +
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0))
+alpha_Observed_cazy <- alpha_Observed_b + scale_y_discrete(limits=rev)
+```
+```{r plot Shannon diversity biogeochem}
+alpha_Shannon_b <- ggplot(data=genes_all_alpha, aes(y=Forest, x=Shannon_CAZy, group=Forest, color=Forest)) +
+  geom_violin(aes(fill=Forest), color="black", scale = "width")+
+  stat_boxplot(geom = "errorbar", width = 0.5, color="black")+
+  stat_summary(fun=mean, geom="point", shape=21, size=3, color="black", fill="black") +
+  theme_bw(base_size = 15)+
+  xlab("Shannon: CAZy genes")+
+  theme(axis.text.y = element_text(colour = "black", size = 10),
+  axis.text.x = element_text(colour = "black", size = 8),
+  axis.title.x = element_text(size = 12))+
+  ylab("")+
+  scale_fill_brewer(palette = "YlOrRd")+
+  scale_x_continuous(n.breaks = 10, limits = c(3.4, 4))+
+  annotate("text", x = 4, y=9, label= "a", size=4)+
+  annotate("text", x = 4, y=8, label= "ab", size=4)+
+  annotate("text", x = 4, y=7, label= "c", size=4)+
+  annotate("text", x = 4, y=6, label= "ab", size=4)+
+  annotate("text", x = 4, y=5, label= "a", size=4)+
+  annotate("text", x = 4, y=4, label= "a", size=4)+
+  annotate("text", x = 4, y=3, label= "b", size=4)+
+  annotate("text", x = 4, y=2, label= "ab", size=4)+
+  annotate("text", x = 4, y=1, label= "d", size=4)+
+  labs(caption="KW Chi-sq=79.07, p<0.001") +
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0))
+alpha_Shannon_cazy <- alpha_Shannon_b + scale_y_discrete(limits=rev)
+```
+#PLOT eggNOG GENES
+```{r plot Observed genes biogeochem}
+alpha_Observed_c <- ggplot(data=genes_all_alpha, aes(y=Forest, x=Observed_eggNOG, group=Forest, color=Forest)) +
+  geom_violin(aes(fill=Forest), color="black", scale = "width")+
+  stat_boxplot(geom = "errorbar", width = 0.5, color="black")+
+  stat_summary(fun=mean, geom="point", shape=21, size=3, color="black", fill="black") +
+  theme_bw(base_size = 15)+
+  xlab("Observed: EggNOG OGs")+
+  theme(axis.text.y = element_text(colour = "black", size = 10),
+  axis.text.x = element_text(colour = "black", size = 8),
+  axis.title.x = element_text(size = 12))+
+  ylab("")+
+  scale_fill_brewer(palette = "YlOrRd")+
+  annotate("text", x = 136200, y=9, label= "a", size=4)+
+  annotate("text", x = 136200, y=8, label= "a", size=4)+
+  annotate("text", x = 136200, y=7, label= "b", size=4)+
+  annotate("text", x = 136200, y=6, label= "c", size=4)+
+  annotate("text", x = 136200, y=5, label= "d", size=4)+
+  annotate("text", x = 136200, y=4, label= "ad", size=4)+
+  annotate("text", x = 136200, y=3, label= "c", size=4)+
+  annotate("text", x = 136200, y=2, label= "bc", size=4)+
+  annotate("text", x = 136200, y=1, label= "e", size=4)+
+  labs(caption="KW Chi-sq=78.53, p<0.001") +
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0))
+alpha_Observed_eggnog <- alpha_Observed_c + scale_y_discrete(limits=rev)
+```
+```{r plot Shannon diversity biogeochem}
+alpha_Shannon_C <- ggplot(data=genes_all_alpha, aes(y=Forest, x=Shannon_eggNOG, group=Forest, color=Forest)) +
+  geom_violin(aes(fill=Forest), color="black", scale = "width")+
+  stat_boxplot(geom = "errorbar", width = 0.5, color="black")+
+  stat_summary(fun=mean, geom="point", shape=21, size=3, color="black", fill="black") +
+  theme_bw(base_size = 15)+
+  xlab("Shannon: EggNOG OGs")+
+  theme(axis.text.y = element_text(colour = "black", size = 10),
+  axis.text.x = element_text(colour = "black", size = 8),
+  axis.title.x = element_text(size = 12))+
+  ylab("")+
+  scale_x_continuous(n.breaks = 10, limits = c(9.75, 11.5))+
+  scale_fill_brewer(palette = "YlOrRd")+
+  annotate("text", x = 11.5, y=9, label= "ab", size=4)+
+  annotate("text", x = 11.5, y=8, label= "a", size=4)+
+  annotate("text", x = 11.5, y=7, label= "c", size=4)+
+  annotate("text", x = 11.5, y=6, label= "cd", size=4)+
+  annotate("text", x = 11.5, y=5, label= "a", size=4)+
+  annotate("text", x = 11.5, y=4, label= "a", size=4)+
+  annotate("text", x = 11.5, y=3, label= "d", size=4)+
+  annotate("text", x = 11.5, y=2, label= "c", size=4)+
+  annotate("text", x = 11.5, y=1, label= "b", size=4)+
+  labs(caption="KW Chi-sq=71.18, p<0.001") +
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0))
+alpha_Shannon_eggnog <- alpha_Shannon_C + scale_y_discrete(limits=rev)
+```
+
+```{r combine and export plots}
+alpha_Observed_metabolic <- alpha_Observed_metabolic + theme(plot.margin = unit(c(0.2,0.2,0.2,0.2), 'lines'))
+alpha_Shannon_metabolic <- alpha_Shannon_metabolic + theme(plot.margin = unit(c(0.2,0.2,0.2,0.2), 'lines'))
+alpha_Observed_bacteria <- alpha_Observed_bacteria + theme(plot.margin = unit(c(0.2,0.2,0.2,0.2), 'lines'))
+alpha_Shannon_bacteria <- alpha_Shannon_bacteria + theme(plot.margin = unit(c(0.2,0.2,0.2,0.2), 'lines'))
+alpha_Observed_cazy <- alpha_Observed_cazy + theme(plot.margin = unit(c(0.2,0.2,0.2,0.2), 'lines'))
+alpha_Shannon_cazy <- alpha_Shannon_cazy + theme(plot.margin = unit(c(0.2,0.2,0.2,0.2), 'lines'))
+alpha_Observed_eggnog <- alpha_Observed_eggnog + theme(plot.margin = unit(c(0.2,0.2,0.2,0.2), 'lines'))
+alpha_Shannon_eggnog <- alpha_Shannon_eggnog + theme(plot.margin = unit(c(0.2,0.2,0.2,0.2), 'lines'))
+```
+```{r one big plot}
+plot_ALL <- ggarrange(alpha_Observed_bacteria, alpha_Observed_eggnog, alpha_Observed_metabolic, alpha_Observed_cazy, alpha_Shannon_bacteria, alpha_Shannon_eggnog, alpha_Shannon_metabolic, alpha_Shannon_cazy, common.legend = TRUE, legend = "none", nrow = 2, ncol = 4, align = "hv", widths = c(-1, -1, -1, -1, -1, -1, -1, -1), labels = c("A1)", "B1)", "C1)", "D1)", "A2)", "B2)", "C2)", "D2)"), vjust = 1.2, hjust = -0.3, font.label = list(size=12))
+png('~/Metagenomics/Manuscript/Figures/alpha_diversity_edited.png', width = 8500, height = 4100, res = 500)
+plot_ALL
+```
+
+##PERMANOVA AND PAIRWISE ADONIS TESTS
+```{r beta diversity analysis}
+beta_bray <- phyloseq::distance(Functional_genes_GLOM, "bray")#using non-rounded counts
+#permanova tests in vegan
+adonis2(beta_bray ~ sampleDat_all$Forest) 
+#pairwise adonis tests
+pairwise.adonis(beta_bray, sampleDat_all$Forest, sim.function = "vegdist", sim.method = "bray", p.adjust.m = "holm", perm = 999) 
+```
+```{r plotting NMDS}
+#edit names, change order of forests
+sample_data(Functional_genes_GLOM)$Forest <- factor(sample_data(Functional_genes_GLOM)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(Functional_genes_GLOM)$Forest)[4] <- "Windy Hill"
+```
+```{r}
+functionGenes.ord <- ordinate(Functional_genes_GLOM, "NMDS", "bray")
+```
+```{r}
+functionGenes.ordPlot = plot_ordination(Functional_genes_GLOM, functionGenes.ord, type="samples", color="Forest", title = "C) Metabolic genes") +
+geom_point(size=4)+
+geom_convexhull(alpha = 0.6, aes(fill = Forest))+
+theme_bw(base_size = 15)+  
+theme(axis.title = element_text(size = 12))+
+scale_color_brewer(palette = "YlOrRd")+
+scale_fill_brewer(palette = "YlOrRd")
+```
+##combining NMDS plots
+```{r}
+Bacteria.ordPlot <- readRDS("~/Metagenomics/phyloseq/Results/Bacteria.ordPlot.rds")
+EG_Genes.ordPlot <- readRDS("~/Metagenomics/phyloseq/Results/EG_Genes.ordPlot.rds")
+cazyGenes.ordPlot <- readRDS("~/Metagenomics/phyloseq/Results/cazyGenes.ordPlot.rds")
+```
+```{r}
+Bacteria.ordPlot2 <- Bacteria.ordPlot + labs(caption="PERMANOVA: R2=0.73, p<0.001") + 
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0),
+        axis.title = element_text(size = 12),
+        plot.title = element_text(size=15))
+
+EG_Genes.ordPlot2 <- eggnogGenes.ordPlot + labs(caption="PERMANOVA: R2=0.62, p<0.001") + 
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0),
+        axis.title = element_text(size = 12),
+        plot.title = element_text(size=15))
+
+F_Genes.ordPlot2 <- functionGenes.ordPlot + labs(caption="PERMANOVA: R2=0.84, p<0.001") + 
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0),
+        axis.title = element_text(size = 12),
+        plot.title = element_text(size=15))
+
+cazyGenes.ordPlot2 <- cazyGenes.ordPlot + labs(caption="PERMANOVA: R2=0.73, p<0.001") + 
+  theme(plot.caption = element_text(size=12, face = "italic", hjust = 0),
+        axis.title = element_text(size = 12),
+        plot.title = element_text(size=15))
+
+NMDS_plots <- ggarrange(Bacteria.ordPlot2, EG_Genes.ordPlot2, F_Genes.ordPlot2, cazyGenes.ordPlot2, common.legend = TRUE, legend = "right", align = "hv")
+```
+```{r}
+png('~/Metagenomics/Manuscript/Figures/NMDS_plots.png', width = 5000, height = 4000, res = 500)
+NMDS_plots
+```

@@ -1,0 +1,103 @@
+---
+title: "eggNOG diversity analysis"
+output: html_document
+date: "2025-02-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+##alpha and beta diversity analysis of eggNOG functional genes
+```{r}
+remotes::install_github("mikemc/speedyseq")
+library(speedyseq)
+library(phyloseq)
+```
+```{r read in eggNOG ps object}
+eggNOG_physeq <- readRDS("~/Metagenomics/phyloseq/eggNOG_ps.rds")#405706 taxa and 90 samples
+rank_names(eggNOG_physeq)
+
+#edit names, change order of forests to reflect disturbance gradient
+sample_data(eggNOG_physeq)$Forest <- factor(sample_data(eggNOG_physeq)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(eggNOG_physeq)$Forest)[4] <- "Windy Hill"
+```
+```{r merge by seed ortholog}
+eggNOG_physeq2 <- eggNOG_physeq
+tax_table(eggNOG_physeq2) <- tax_table(eggNOG_physeq2)[,-1:-2]
+eggNOG_GLOM <- speedyseq::tax_glom(eggNOG_physeq2, taxrank = "seed_ortholog") 
+taxa_names(eggnog_GLOM) <- tax_table(eggnog_GLOM)[,1]
+saveRDS(eggnog_GLOM, "~/Metagenomics/phyloseq/eggnog_GLOM.rds")#export phyloseq files
+```
+##alpha diversity
+```{r calculate alpha diversity}
+eggnog_GLOM.r = transform_sample_counts(eggnog_GLOM, round) #round counts
+eggnog_GLOM.alpha = estimate_richness(eggnog_GLOM.r)
+#export alpha diversity
+write.csv(eggnog_GLOM.alpha, "~/Metagenomics/phyloseq/Results/eggnog_alpha.csv")
+```
+##beta diversity
+```{r beta diversity analysis}
+eggnog_bray <- phyloseq::distance(eggnog_GLOM, "bray")#using non-rounded counts
+#permanova tests in vegan
+adonis2(eggnog_bray ~ sampleDat_all$Forest) 
+pairwise.adonis(eggnog_bray, sampleDat_all$Forest, sim.function = "vegdist", sim.method = "bray", p.adjust.m = "holm", perm = 999) #pairwise adonis tests
+```
+```{r}
+eggnogGenes.ord <- ordinate(eggnog_GLOM, "NMDS", "bray")
+```
+```{r}
+eggnogGenes.ordPlot = plot_ordination(eggnog_GLOM, eggnogGenes.ord, type="samples", color="Forest", title = "B) eggNOG OGs") +
+geom_point(size=4)+
+geom_convexhull(alpha = 0.6, aes(fill = Forest))+  
+theme(axis.title = element_text(size = 12))+
+theme_bw(base_size = 15)+
+scale_color_brewer(palette = "YlOrRd")+
+scale_fill_brewer(palette = "YlOrRd")
+
+saveRDS(eggnogGenes.ordPlot, "~/Metagenomics/phyloseq/Results/eggnogGenes.ordPlot.rds) #save ordination for plotting later on
+```
+
+##CALCULATE AND PLOT RELATIVE ABUNDANCES OF EGGNOG COG CATEGORIES
+```{r convert to relative abundance}
+eggNOG_physeq_RA = transform_sample_counts(eggNOG_physeq, function(x) x / sum(x) *100)
+```
+```{r}
+eggNOG_GLOM_Cat <- speedyseq::tax_glom(eggNOG_physeq_RA, taxrank = "Category")
+```
+```{r}
+eggNOG_GLOM_Cat.df <- psmelt(eggNOG_GLOM_Cat) #melt phyloseq object
+eggNOG_GLOM_Cat.sum <- eggNOG_GLOM_Cat.df %>%
+  dplyr::group_by(Forest, Category) %>%
+  dplyr::summarize(mean_abund = mean(Abundance, na.rm=FALSE)) 
+```
+```{r}
+colourCount = length(unique(eggNOG_GLOM_Cat.sum$Category))
+mycolors2 = c(brewer.pal(name="Set3", n = 8), brewer.pal(name="Paired", n = 8), brewer.pal(name="Dark2", n = 8)) #set colour palette
+```
+```{r}
+eggNOG_GLOM_Cat.sum$Category <- as.factor(eggNOG_GLOM_Cat.sum$Category)
+levels(eggNOG_GLOM_Cat.sum$Category) <- c("Amino acid metabolism", "Carbohydrate metabolism", "Cell cycle control, division, chromosome partitioning",  "Cell motility", "Cell wall/membrane/envelope biogenesis", "Chromatin structure & dynamics", "Coenzyme metabolism", "Cytoskeleton", "Defense mechanisms", "Energy production & conversion", "Function unknown", "Multiple categories assigned", "Inorganic ion metabolism", "Intracellular trafficking, secretion & vesicular transport", "Lipid metabolism", "Nucleotide metabolism", "PTM, protein turnover, chaperones", "Replication, recombination & repair", "RNA processing & modification", "Secondary metabolite metabolism", "Signal transduction mechanisms", "Translation, ribosomal structure & biogenesis")
+```
+```{r}
+eggNOG_Cat_plot <- ggplot(eggNOG_GLOM_Cat.sum, aes(fill=reorder(Category, +mean_abund), y=mean_abund, x=Forest)) + 
+  geom_bar(position="stack", stat="identity")+
+  theme_bw(base_size = 15)+ 
+  theme(axis.text.y = element_text(colour = "black", size = 12),
+  axis.text.x = element_text(colour = "black", size = 12),
+  axis.title.x = element_text(size = 12),
+  legend.position = "right",
+  legend.text = element_text(size = 12),
+  legend.key.size = unit(0.6, "cm"),
+  legend.justification = "left",
+  legend.box.margin = margin(l = 1, unit = "cm"),
+  legend.title = element_text(size = 14))+
+  xlab("")+
+  ylab("Relative abundance (%)")+
+  scale_fill_manual(values = mycolors2)+
+  geom_col(color = "black")+ 
+  guides(fill=guide_legend(title="EggNOG COG category", ncol = 2))+ 
+  scale_y_continuous(n.breaks = 10, limits = c(0, 100))
+eggNOG_Cat_plot2 <- eggNOG_Cat_plot + coord_flip() + scale_x_discrete(limits=rev)
+```
