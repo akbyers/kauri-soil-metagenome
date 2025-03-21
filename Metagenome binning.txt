@@ -1,0 +1,49 @@
+##Binning metagenome assemblies using metabat and maxbin
+##This is an example script that this was performed for each of the nine forests separately, so change forest ID as required
+
+# Navigate to working directory
+cd [your directory]
+mkdir Binning/Oratia
+
+# Load seqmagick
+module purge
+module load seqmagick/0.8.4-gimkl-2020a-Python-3.8.2
+
+# Filter assemblies
+seqmagick convert --min-length 1500 Assembly/Oratia/final.contigs.fa Assembly/Oratia/final.contigs_m1500.fa
+
+#Obtain coverage profiles via read mapping
+module purge
+module load Bowtie2/2.5.4-GCC-12.3.0
+
+# Build index
+bowtie2-build Assembly/Oratia/final.contigs_m1500.fa Assembly/Oratia/bw_spades
+
+# Map the reads
+module purge
+module load Bowtie2/2.5.4-GCC-12.3.0 SAMtools/1.19-GCC-12.3.0
+
+bowtie2 --minins 200 --maxins 800 --threads 12 --sensitive -x Assembly/Silverdale/bw_spades -1 /MGS_RDF/raw_data/concatenated_reads/Oratia_CONCAT_1.fastq -2 /MGS_RDF/raw_data/concatenated_reads/Oratia_CONCAT_2.fastq -S Binning/Oratia/Oratia.sam
+
+samtools sort --threads 12 -o Binning/Oratia/Oratia.bam Binning/Oratia/Oratia.sam
+
+#Binning using METABAT2
+module purge
+module load MetaBAT/2.15-GCC-11.3.0
+
+# Manual specification of files
+jgi_summarize_bam_contig_depths --outputDepth Binning/Oratia/metabat.txt Binning/Oratia/Oratia.bam
+metabat2 -t 12 -m 1500 -i Assembly/Oratia/final.contigs_m1500.fa -a Binning/Oratia/metabat.txt -o Binning/Oratia/metabat/bin
+
+#Binning using MaxBin
+module purge
+module load MaxBin/2.2.7-GCC-11.3.0-Perl-5.34.1
+
+#format MaxBin coverage file
+cut -f1,4,6,8,10 Binning/Oratia/metabat.txt > Binning/Oratia/maxbin.txt
+
+# Output directory
+mkdir -p Binning/Oratia/maxbin/
+
+# Run MaxBin
+run_MaxBin.pl -thread 12 -min_contig_length 1500 -contig Assembly/Oratia/final.contigs_m1500.fa -abund Binning/Oratia/maxbin.txt -out Binning/Oratia/maxbin/maxbin -max_iteration 30

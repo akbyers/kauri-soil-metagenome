@@ -1,0 +1,35 @@
+#consolidating the metagenomic bins recovered from the two binning algorithms into a final bin set using DAS_Tool and CheckM2
+#Reference for 50% completeness and 10% contamination: https://www.nature.com/articles/s41467-023-43000-z
+#This is an example script that was performed on each forest separately, so change forest ID as required
+
+cd [change to your directory]
+
+#Create metabat_associations.txt
+for bin_path in metabat/*.fa; do
+    bin_name=$(basename ${bin_path} .fa)
+
+   grep ">" ${bin_path} | sed 's/>//g' | sed "s/$/\t${bin_name}/g" >> metabat_associations.txt
+done
+
+#Create maxbin_associations.txt
+for bin_path in maxbin/*.fasta;
+do
+    bin_name=$(basename ${bin_path} .fasta)
+    grep ">" ${bin_path} | sed 's/>//g' | sed "s/$/\t${bin_name}/g" >> maxbin_associations.txt
+done
+
+#Bin dereplication using DAS_Tool
+module purge
+module load DAS_Tool/1.1.5-gimkl-2022a-R-4.2.1
+
+# Create DAS_Tool output directory
+mkdir -p DAS_Tool/
+
+# Run DAS_Tool
+DAS_Tool -i metabat_associations.txt,maxbin_associations.txt -l MetaBAT,MaxBin -t 5 --write_bins --search_engine diamond -c /MGS_RDF/CO_ASSEMBLY/Assembly/Silverdale/final.contigs_m1500.fa -o DAS_Tool/
+
+#Run CheckM2 to assess bin completeness and contamination
+module purge
+module load CheckM2/1.0.1-Miniconda3
+
+checkm2 predict -t 10 -x .fa --input DAS_Tool/_DASTool_bins/ --output-directory DAS_Tool/CheckM2

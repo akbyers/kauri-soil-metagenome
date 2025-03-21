@@ -1,0 +1,46 @@
+#!/bin/bash -e
+
+#SBATCH --account       lincoln03750
+#SBATCH --job-name      megahit_bacteria
+#SBATCH --time          4-00:00:00
+#SBATCH --mem           10GB
+#SBATCH --cpus-per-task 20
+#SBATCH --error         %x_%j.err
+#SBATCH --output        %x_%j.out
+#SBATCH --mail-user     alexa.byers@lincoln.ac.nz
+#SBATCH --mail-type     ALL
+
+#assembling metagenomic reads into contigs using megahit. Using a coassembly approach, where metagenomic sequences were concatenated by forest site
+cd [set working directory]
+mkdir metagenome_assembly
+
+#Load modules
+module purge
+module load MEGAHIT/1.2.9-gimkl-2022a-Python-3.10.5
+
+##ORATIA
+megahit -1 raw_data/concatenated_reads/Oratia_CONCAT_1.fastq -2 raw_data/concatenated_reads/Oratia_CONCAT_2.fastq -o CO_ASSEMBLY/Assembly/Oratia --presets meta-large -m 300000000000 -t $SLURM_CPUS_PER_TASK 
+
+##LAINGHOLM
+megahit -1 raw_data/concatenated_reads/Laingholm_CONCAT_1.fastq -2 raw_data/concatenated_reads/Laingholm_CONCAT_2.fastq -o CO_ASSEMBLY/Assembly/Laingholm --presets meta-large -m 500000000000 -t $SLURM_CPUS_PER_TASK
+
+##PUKETI
+megahit -1 raw_data/concatenated_reads/Puketi_CONCAT_1.fastq -2 raw_data/concatenated_reads/Puketi_CONCAT_2.fastq -o CO_ASSEMBLY/Assembly/Puketi --presets meta-large -m 500000000000 -t $SLURM_CPUS_PER_TASK
+
+##SILVERDALE
+megahit -1 raw_data/concatenated_reads/Silverdale_CONCAT_1.fastq -2 raw_data/concatenated_reads/Silverdale_CONCAT_2.fastq -o CO_ASSEMBLY/Assembly/Silverdale --presets meta-large -m 500000000000 -t $SLURM_CPUS_PER_TASK --continue
+
+##GADGIL
+megahit -1 raw_data_Aotea/concatenated_reads/GG_CONCAT_1.fastq -2 raw_data_Aotea/concatenated_reads/GG_CONCAT_2.fastq -o CO_ASSEMBLY/Assembly/Gadgil --presets meta-large -m 500000000000 -t 20
+
+##GLENFERN
+megahit -1 raw_data_Aotea/concatenated_reads/GF_CONCAT_1.fastq -2 raw_data_Aotea/concatenated_reads/GF_CONCAT_2.fastq -o CO_ASSEMBLY/Assembly/Glenfern --presets meta-large -m 500000000000 -t 20
+
+##HIRAKIMATA
+megahit -1 raw_data_Aotea/concatenated_reads/HM_CONCAT_1.fastq -2 raw_data_Aotea/concatenated_reads/HM_CONCAT_2.fastq -o CO_ASSEMBLY/Assembly/Hirakimata --presets meta-large -m 500000000000 -t 20
+
+##WINDY HILL
+megahit -1 raw_data_Aotea/concatenated_reads/WH_CONCAT_1.fastq -2 raw_data_Aotea/concatenated_reads/WH_CONCAT_2.fastq -o CO_ASSEMBLY/Assembly/Windy_Hill --presets meta-large -m 500000000000 -t 20
+
+##KAIARAARA
+megahit -1 raw_data_Aotea/concatenated_reads/KA_CONCAT_1.fastq -2 raw_data_Aotea/concatenated_reads/KA_CONCAT_2.fastq -o CO_ASSEMBLY/Assembly/Kaiaraara --presets meta-large -m 500000000000 -t 20
