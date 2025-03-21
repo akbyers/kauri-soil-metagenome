@@ -1,0 +1,152 @@
+##script for microTraits analysis of metagenomic bins. Perform this analysis in R via NeSI terminal
+
+##Step 1. Download microtraits
+module load R/4.2.1-gimkl-2022a 
+module load devtools/2.4.4-gimkl-2022a-R-4.2.1
+R
+
+##installing packages
+list_of_packages = c("R.utils", "RColorBrewer", "ape", "assertthat", "checkmate", "coRdon", "corrplot", "doParallel", "dplyr", "futile.logger", "grid", "gtools", "kmed", "lazyeval", "magrittr", "parallel", "pheatmap", "readr", "stringr", "tibble", "tictoc", "tidyr")
+newpackages <- list_of_packages[!(list_of_packages %in% installed.packages()[,"Package"])]
+if(length(newpackages)) install.packages(newpackages)
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("Biostrings")
+BiocManager::install("coRdon")
+BiocManager::install("ComplexHeatmap")
+install.packages("seqinr", dependencies=TRUE)
+
+devtools::install_github("jlw-ecoevo/gRodon")
+devtools::install_github("ukaraoz/microtrait")
+
+#download databases
+options(timeout=200)
+microtrait::prep.hmmmodels() 
+
+##Step 2. Run microtraits 
+
+cd microtraits
+module load R/4.2.1-gimkl-2022a 
+module load devtools/2.4.4-gimkl-2022a-R-4.2.1 
+module load prodigal/2.6.3-GCCcore-7.4.0 
+module load HMMER/3.4-GCC-12.3.0
+R
+
+library(microtrait)
+setwd("~/microtraits")
+
+##run on folder of genomes
+genomes_dir = "dereplicated_genomes"
+genomes_files = list.files("dereplicated_genomes", full.names = T, recursive = T, pattern = ".fa$")
+microtrait_results = extract.traits.parallel(genomes_files, dirname(genomes_files), ncores = 12)
+
+##Step 3: Extract microtrait outputs as .csv format in R studio
+setwd("~/Metagenomics/microTraits/RDS_output_files")##folder of genome files (one per MAG)
+
+# Make a vector of all your file paths
+files = list.files(path = '~/Metagenomics/microTraits/RDS_output_files', pattern = '.rds$')
+# Make a vector of file names
+file_names <-  gsub(pattern = "\\_edit.microtrait.rds$", replacement = "", x = basename(files))
+# Read all your data into a list
+data_list <- lapply(files, readRDS)
+
+# Assign file names to list elements
+names(data_list) <- file_names
+
+#extract functional guilds
+functional_guilds_1 <- lapply(data_list, function(x) as.data.frame(x$trait_counts_atgranularity1))
+functional_guilds_1 <- rbindlist(functional_guilds_1, use.names=TRUE, fill=FALSE, idcol=TRUE)
+write.csv(functional_guilds_1, "~/Metagenomics/microTraits/functionGuilds_G1.csv")
+
+functional_guilds_3 <- lapply(data_list, function(x) as.data.frame(x$trait_counts_atgranularity3))
+functional_guilds_3 <- rbindlist(functional_guilds_3, use.names=TRUE, fill=FALSE, idcol=TRUE)
+write.csv(functional_guilds_3, "~/Metagenomics/microTraits/functionGuilds_G3.csv")
+
+#Step 4. Analysis of microTrait data in R studio
+library(dplyr)
+library(ggplot2)
+library(ggsankey)
+library(vegan)
+library(funrar)
+
+#Read in rds file
+genomeset_results <- readRDS("~/Metagenomics/microTraits/genomeset_results.rds")
+trait_matrixatgranularity1 <- genomeset_results$trait_matrixatgranularity1[,-39:-41]
+metadata <- read.csv("~/Metagenomics/microTraits/metadata.csv")
+
+##read in edited file
+functional_guilds_1 <- read.csv("~/Metagenomics/microTraits/functionGuilds_G1_edit.csv") ##pre-formatted file
+
+#group by edited categories
+functional_guilds_2 <- functional_guilds_1  %>%
+  group_by(microtrait_trait.name_EDIT, ID, Forest) %>%
+  summarise(count = sum(microtrait_trait.value))
+
+##convert to relative abundance
+#by most refined guild
+functionalGuilds_RA <- functional_guilds_2 %>%
+  group_by(ID, Forest) %>%
+  mutate(frequency = count / sum(count) *100)
+functionalGuilds_RA$Forest <- functional_guilds_1$Forest
+
+#convert to wide format
+functionalGuilds_RA.w <- dcast(functionalGuilds_RA, ID ~ microtrait_trait.name_EDIT)
+functionalGuilds_RA.w$Forest <- metadata$Forest
+
+#kruskal wallis tests
+variables <- colnames(functionalGuilds_RA.w[2:35])
+KW_functionalGuilds <- lapply(variables, function(var) {
+  formula_str <- paste0("`", var, "` ~ Forest")  # Add backticks around the variable name
+  kruskal.test(as.formula(formula_str), data = functionalGuilds_RA.w)
+})
+# Extract results and store them in a dataframe:
+KW_results_df <- do.call(rbind, lapply(seq_along(variables), function(i) {
+  test_result <- KW_functionalGuilds[[i]]
+  data.frame(
+    Variable   = variables[i],
+    Statistic  = unname(test_result$statistic),
+    Parameter  = if (!is.null(test_result$parameter)) unname(test_result$parameter) else NA,
+    P_Value    = test_result$p.value,
+    Method     = test_result$method,
+    Data_Name  = test_result$data.name,
+    stringsAsFactors = FALSE
+  )
+}))
+write.csv(KW_results_df, "~/Metagenomics/microTraits/KW_results_df.csv")
+
+
+##Summarise relative abundances of functional guilds
+functionalGuilds_RA_mean <- functionalGuilds_RA %>%
+  group_by(Forest, microtrait_trait.name_EDIT) %>%
+  summarise(mean = mean(frequency), stdv= sd(frequency)) #convert to relative abundance
+
+##Sankey diagrams - as there are no major differences we'll just make one plot. Convert the data into a long format suitable for ggsankey
+split_cols <- data.frame(do.call('rbind', strsplit(as.character(functionalGuilds_RA_mean$microtrait_trait.name_EDIT),':',fixed=TRUE)))
+colnames(split_cols) <- c("Guild", "Function", "Substrate")
+functionalGuilds_RA_ggSankey <- cbind(functionalGuilds_RA_mean, split_cols)
+DF_long <- make_long(functionalGuilds_RA_ggSankey[,-1], Guild, Function, Substrate, value = mean)
+
+# Plot the Sankey diagram using ggplot2 + ggsankey
+sankey_plot <- ggplot(DF_long, aes(x = x, 
+                    next_x = next_x, 
+                    node = fct_inorder(node), 
+                    next_node = next_node, 
+                    fill = factor(node), 
+                    label = node,
+                    value=value)) +
+  geom_sankey(flow.alpha = 0.7, node.color = "gray") +  # Add flow and nodes
+  geom_sankey_text(size = 4, color = "black") +  # Add text labels
+  theme_sankey(base_size = 20) +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),  # Remove x-axis title
+        axis.text.x = element_blank(),   # Remove x-axis text
+        axis.ticks.x = element_blank(),
+plot.margin = margin(1, 1, 1, 1)) +  # Reduced margin
+  scale_x_discrete(expand = c(0.1, 0.1))
+
+saveRDS(sankey_plot, "~/Metagenomics/microTraits/sankey_plot.rds")
+
+png('~/Metagenomics/Manuscript/Figures/sankey.png', width = 5000, height = 4000, res = 500)
+sankey_plot
+dev.off()
