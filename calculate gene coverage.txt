@@ -1,0 +1,58 @@
+#Calculate coverage of genes in concatenated MGS file
+
+#Working directory
+cd [your working directory]
+mkdir bin_coverage
+
+#Step 1: Concat all MAGS into single fasta file
+cat deReplicated_FINAL_BINS/deRep_output/*_.fa > deReplicated_FINAL_BINS/deRep_output/concatenated_MAGs.fasta
+
+#Step 2: remove duplicate reads using dedupe.sh script
+# Load modules
+module purge
+module load BBMap/39.01-GCC-11.3.0
+
+dedupe.sh in=deReplicated_FINAL_BINS/deRep_output/concatenated_MAGs.fasta out=deReplicated_FINAL_BINS/deRep_output/DEDUPE_concatenated_MAGs.fasta
+
+#Step 3: build the index for Bowtie2
+module purge
+module load Bowtie2/2.4.5-GCC-11.3.0 
+module load SAMtools/1.15.1-GCC-11.3.0
+
+#Build bowtie index
+bowtie2-build deReplicated_FINAL_BINS/deRep_output/DEDUPE_concatenated_MAGs.fasta bin_coverage/bw_bins
+
+#Step 4: Run Bowtie2 to map paired end metagenomic reads back to index of concatenated bins
+#GLENFERN
+bowtie2 --minins 200 --maxins 800 --threads 5 --sensitive -x bin_coverage/bw_bins -1 ../raw_data_ALL/GF_10_1.fastq -2 ../raw_data_ALL/GF_10_2.fastq -S bin_coverage/GF_10.sam
+bowtie2 --minins 200 --maxins 800 --threads 5 --sensitive -x bin_coverage/bw_bins -1 ../raw_data_ALL/GF_1_1.fastq -2 ../raw_data_ALL/GF_1_2.fastq -S bin_coverage/GF_1.sam
+bowtie2 --minins 200 --maxins 800 --threads 5 --sensitive -x bin_coverage/bw_bins -1 ../raw_data_ALL/GF_2_1.fastq -2 ../raw_data_ALL/GF_2_2.fastq -S bin_coverage/GF_2.sam
+bowtie2 --minins 200 --maxins 800 --threads 5 --sensitive -x bin_coverage/bw_bins -1 ../raw_data_ALL/GF_3_1.fastq -2 ../raw_data_ALL/GF_3_2.fastq -S bin_coverage/GF_3.sam
+bowtie2 --minins 200 --maxins 800 --threads 5 --sensitive -x bin_coverage/bw_bins -1 ../raw_data_ALL/GF_4_1.fastq -2 ../raw_data_ALL/GF_4_2.fastq -S bin_coverage/GF_4.sam
+bowtie2 --minins 200 --maxins 800 --threads 5 --sensitive -x bin_coverage/bw_bins -1 ../raw_data_ALL/GF_5_1.fastq -2 ../raw_data_ALL/GF_5_2.fastq -S bin_coverage/GF_5.sam
+bowtie2 --minins 200 --maxins 800 --threads 5 --sensitive -x bin_coverage/bw_bins -1 ../raw_data_ALL/GF_6_1.fastq -2 ../raw_data_ALL/GF_6_2.fastq -S bin_coverage/GF_6.sam
+bowtie2 --minins 200 --maxins 800 --threads 5 --sensitive -x bin_coverage/bw_bins -1 ../raw_data_ALL/GF_7_1.fastq -2 ../raw_data_ALL/GF_7_2.fastq -S bin_coverage/GF_7.sam
+bowtie2 --minins 200 --maxins 800 --threads 5 --sensitive -x bin_coverage/bw_bins -1 ../raw_data_ALL/GF_8_1.fastq -2 ../raw_data_ALL/GF_8_2.fastq -S bin_coverage/GF_8.sam
+bowtie2 --minins 200 --maxins 800 --threads 5 --sensitive -x bin_coverage/bw_bins -1 ../raw_data_ALL/GF_9_1.fastq -2 ../raw_data_ALL/GF_9_2.fastq -S bin_coverage/GF_9.sam
+
+#convert to BAM
+#samtools sort -@ 5 -o bin_coverage/GF_10.bam bin_coverage/GF_10.sam
+samtools sort -@ 5 -o bin_coverage/GF_1.bam bin_coverage/GF_1.sam
+samtools sort -@ 5 -o bin_coverage/GF_2.bam bin_coverage/GF_2.sam
+samtools sort -@ 5 -o bin_coverage/GF_3.bam bin_coverage/GF_3.sam
+samtools sort -@ 5 -o bin_coverage/GF_4.bam bin_coverage/GF_4.sam
+samtools sort -@ 5 -o bin_coverage/GF_5.bam bin_coverage/GF_5.sam
+samtools sort -@ 5 -o bin_coverage/GF_6.bam bin_coverage/GF_6.sam
+samtools sort -@ 5 -o bin_coverage/GF_7.bam bin_coverage/GF_7.sam
+samtools sort -@ 5 -o bin_coverage/GF_8.bam bin_coverage/GF_8.sam
+samtools sort -@ 5 -o bin_coverage/GF_9.bam bin_coverage/GF_9.sam
+rm bin_coverage/GF_*.sam
+
+##REPEAT STEP 4 THIS FOR ALL SAMPLES IN ALL FORESTS
+
+#Step 5: generate the per-sample coverage table for each contig in each bin via MetaBAT's jgi_summarize_bam_contig_depths
+module purge
+module load MetaBAT/2.15-GCC-11.3.0
+
+# calculate coverage table
+jgi_summarize_bam_contig_depths --outputDepth bin_coverage/bins_cov_table.txt bin_coverage/*.bam
