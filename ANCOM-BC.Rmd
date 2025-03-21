@@ -1,0 +1,495 @@
+---
+title: "ANCOM-BC2"
+output: html_document
+date: "2025-03-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+##DIFFERENTIAL ABUNDANCE ANALYSIS OF MICROBIAL FUNCTIONAL GENES USING ANCOM-BC2
+
+```{r load libraries}
+#BiocManager::install("mia")
+#install.packages("openxlsx")
+library(mia)
+library(dplyr)
+library(microbiome)
+library(ggplot2)
+library(openxlsx)
+library(metagMisc)
+library(ANCOMBC)
+```
+```{r load phyloseq objects}
+#METABOLIC genes
+Functional_genes_GLOM <- readRDS("~/Metagenomics/phyloseq/Functional_genes_physeq.rds")
+Functional_genes_CAT <- tax_glom(Functional_genes_GLOM, taxrank = "Category") #merge at category level 
+taxa_names(Functional_genes_CAT) <- tax_table(Functional_genes_CAT)[,1]
+Functional_genes_FUNCTION <- tax_glom(Functional_genes_GLOM, taxrank = "Func_abb") #merge at function level
+taxa_names(Functional_genes_FUNCTION) <- tax_table(Functional_genes_FUNCTION)[,2]
+
+#CAZy genes
+CAZy_ps <- readRDS("~/Metagenomics/phyloseq/CAZy_GLOM.rds")
+CAZy_ps_EC <- tax_glom(CAZy_ps, taxrank = "Enzyme_Class")
+taxa_names(CAZy_ps_EC) <- tax_table(CAZy_ps_EC)[,1]
+
+#Bacterial GENERA
+genus_ps <- readRDS("~/Metagenomics/Kraken/genus_ps.rds")
+taxa_names(genus_ps) <- tax_table(genus_ps)[,1]
+genus_ps_RA <- readRDS("~/Metagenomics/Kraken/genus_ps_RA.rds") #for filtering criteria
+taxa_names(genus_ps_RA) <- tax_table(genus_ps_RA)[,1]
+```
+```{r}
+#filter bacterial genera based on relative abundance
+genus_ps_RA2 <- filter_taxa(genus_ps_RA, function(x) sum(x > 0.5) > (0.05*length(x)), TRUE) 
+keep_taxa <- taxa_names(genus_ps_RA2)
+genus_ps2 = subset_taxa(genus_ps, Phylum %in% keep_taxa)
+```
+```{r set Hirakimata forest as reference group}
+sample_data(Functional_genes_CAT)$Forest <- factor(sample_data(Functional_genes_CAT)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(Functional_genes_CAT)$Forest)
+
+sample_data(Functional_genes_FUNCTION)$Forest <- factor(sample_data(Functional_genes_FUNCTION)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(Functional_genes_FUNCTION)$Forest)
+
+sample_data(Functional_genes_GLOM2)$Forest <- factor(sample_data(Functional_genes_GLOM2)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(Functional_genes_GLOM2)$Forest)
+
+sample_data(CAZy_ps_EC)$Forest <- factor(sample_data(CAZy_ps_EC)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(CAZy_ps_EC)$Forest)
+
+sample_data(CAZy_ps2)$Forest <- factor(sample_data(CAZy_ps2)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(CAZy_ps2)$Forest)
+
+sample_data(genus_ps2)$Forest <- factor(sample_data(genus_ps2)$Forest, levels = c("Hirakimata", "Puketi", "Glenfern", "Windy_Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara"))
+levels(sample_data(genus_ps2)$Forest)
+```
+#reformat 'taxa' names to be compatible with ANCOM-BC analysis
+```{r}
+colnames(tax_table(Functional_genes_CAT)) <- c("Phylum", "Class", "Order", "Family", "Genus")
+colnames(tax_table(Functional_genes_FUNCTION)) <- c("Phylum", "Class", "Order", "Family", "Genus")
+colnames(tax_table(Functional_genes_GLOM2)) <- c("Phylum", "Class", "Order", "Family", "Genus")
+colnames(tax_table(CAZy_ps_EC)) <- c("Phylum", "Class", "Order", "Family")
+colnames(tax_table(CAZy_ps2)) <- c("Phylum", "Class", "Order", "Family")
+colnames(tax_table(genus_ps2)) <- c("Phylum", "Class", "Order", "Family", "Genus", "Species","Genus.1")
+```
+
+##RUN ANCOMBC-BC2 ANALYSIS
+
+##CATEGORY LEVEL - merge with cazy gene categories for ANCOM-BC analysis
+```{r}
+##check levels match
+levels(sample_data(Functional_genes_GLOM2)$Forest)
+levels(sample_data(CAZy_ps_EC)$Forest)
+Functional_genes_GLOM.merged <- merge_phyloseq(Functional_genes_GLOM2, CAZy_ps_EC)
+```
+```{r}
+set.seed(71)
+ancombc_category = ancombc2(data = Functional_genes_GLOM.merged,
+                  tax_level = "Phylum",
+                  fix_formula = "Forest", 
+                  p_adj_method = "holm", 
+                  prv_cut = 0, lib_cut = 0, s0_perc = 0.05,
+                  pseudo = 0.1, pseudo_sens = FALSE,
+                  group = "Forest", struc_zero = FALSE, neg_lb = FALSE,
+                  alpha = 0.05, 
+                  global = TRUE, pairwise = TRUE,
+                  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100))
+```
+##FUNCTIONAL LEVEL
+```{r}
+set.seed(71)
+ancombc_function = ancombc2(data = Functional_genes_FUNCTION,
+                  tax_level = "Class",
+                  fix_formula = "Forest", 
+                  p_adj_method = "holm", 
+                  prv_cut = 0, lib_cut = 0, s0_perc = 0.05,
+                  pseudo = 0.1, pseudo_sens = FALSE,
+                  group = "Forest", struc_zero = FALSE, neg_lb = FALSE,
+                  alpha = 0.05, 
+                  global = TRUE, pairwise = TRUE,
+                  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100))
+```
+##GENE LEVEL
+```{r}
+set.seed(71)
+ancombc_genes = ancombc2(data = Functional_genes_GLOM2,
+                  tax_level = "Genus",
+                  fix_formula = "Forest", 
+                  p_adj_method = "holm", 
+                  prv_cut = 0, lib_cut = 0, s0_perc = 0.05,
+                  pseudo = 0.1, pseudo_sens = FALSE,
+                  group = "Forest", struc_zero = FALSE, neg_lb = FALSE,
+                  alpha = 0.05, 
+                  global = TRUE, pairwise = TRUE,
+                  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100))
+```
+##CAZY GENES
+```{r}
+set.seed(71)
+ancombc_CAZy = ancombc2(data = CAZy_ps2,
+                  tax_level = "Class",
+                  fix_formula = "Forest", 
+                  p_adj_method = "holm", 
+                  prv_cut = 0, lib_cut = 0, s0_perc = 0.05,
+                  pseudo = 0.1, pseudo_sens = FALSE,
+                  group = "Forest", struc_zero = FALSE, neg_lb = FALSE,
+                  alpha = 0.05, 
+                  global = TRUE, pairwise = TRUE,
+                  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100))
+```
+##BACTERIAL GENERA
+```{r}
+set.seed(71)
+ancombc_genus = ancombc2(data = genus_ps2,
+                  tax_level = "Phylum",
+                  fix_formula = "Forest", 
+                  p_adj_method = "holm", 
+                  prv_cut = 0, lib_cut = 0, s0_perc = 0.05,
+                  pseudo = 0.1, pseudo_sens = FALSE,
+                  group = "Forest", struc_zero = FALSE, neg_lb = FALSE,
+                  alpha = 0.05, 
+                  global = TRUE, pairwise = TRUE,
+                  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100))
+```
+##Export result datasets
+```{r}
+ANCOM_CATEGORIES <- cbind(ancombc_category$res_global, ancombc_category$res_pair[,182:217])
+ANCOM_GENES <- cbind(ancombc_genes$res_global, ancombc_genes$res_pair[,182:217])
+ANCOM_FUNCTIONS <- cbind(ancombc_function$res_global, ancombc_function$res_pair[,182:217])
+ANCOM_CAZY <- cbind(ancombc_CAZy$res_global, ancombc_CAZy$res_pair[,182:217])
+ANCOM_BACTERIA <- cbind(ancombc_genus$res_global, ancombc_genus$res_pair[,182:217])
+```
+```{r identify variables with no significant pairwise differences}
+No_PW_CAT <- ANCOM_CATEGORIES[apply(ANCOM_CATEGORIES[,6:41], 1, function(x) all(x==FALSE)),]
+No_PW_GENES <- ANCOM_GENES[apply(ANCOM_GENES[,6:41], 1, function(x) all(x==FALSE)),]
+No_PW_FUNCTIONS <- ANCOM_FUNCTIONS[apply(ANCOM_FUNCTIONS[,6:41], 1, function(x) all(x==FALSE)),]
+No_PW_CAZY <- ANCOM_CAZY[apply(ANCOM_CAZY[,6:41], 1, function(x) all(x==FALSE)),]
+No_PW_BACTERIA <- ANCOM_BACTERIA[apply(ANCOM_BACTERIA[,6:41], 1, function(x) all(x==FALSE)),]
+```
+```{r}
+list_of_datasets <- list("Gene"= ANCOM_GENES, "Function"= ANCOM_FUNCTIONS, "Category"= ANCOM_CATEGORIES, "CAZy"= ANCOM_CAZY, "Bacteria"= ANCOM_BACTERIA)
+write.xlsx(list_of_datasets, file = "~/Metagenomics/phyloseq/Results/ANCOMBC.xlsx")
+```
+##PLOTTING RESULTS
+##CATEGORY
+```{r}
+category_abundances <- as.data.frame(ancombc_category$bias_correct_log_table)
+Forests <- as.data.frame(sample_data(Functional_genes_GLOM.merged)$Forest)
+colnames(Forests) <- "Forest"
+category_abundances_DF <- cbind(Forests, t(category_abundances))
+
+##extract W-value
+category_W_value <- ANCOM_CATEGORIES[,1:2]
+category_W_value2 <- cbind(rep(category_W_value[,1], each=9), rep(category_W_value[,2], each=9))
+
+##melt dataframe
+category_abundances_m <- melt(category_abundances_DF)
+category_abundances_sum <- category_abundances_m %>%
+  dplyr::group_by(Forest, variable) %>%
+  dplyr::summarize(Abundance = mean(value), SD = sd(value), n = n(), SE = SD/sqrt(n))
+
+#add gene metadata
+category_abundances_sum <- category_abundances_sum[order(category_abundances_sum$variable),]
+category_abundances_sum <- cbind(category_W_value2, category_abundances_sum)
+colnames(category_abundances_sum) <- c("Category", "W_value","Forest", "variable",  "Abundance", "SD", "n", "SE")
+```
+```{r remove categories that had no significant pairwise differences}
+category_abundances_sum2 <- category_abundances_sum[! category_abundances_sum$Category %in% No_PW_CAT$taxon , ]
+```
+```{r EDIT VARIABLE NAMES}
+levels(category_abundances_sum2$Forest) <- c("Hirakimata", "Puketi", "Glenfern", "Windy Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara")
+category_abundances_sum2$W_value <- as.numeric(category_abundances_sum2$W_value)
+levels(category_abundances_sum2$variable) <- c("Amino acid metabolism", "Aromatics degradation", "Arsenate cycling", "Auxiliary Activities [CAZy]",  "Carbohydrate Binding Module [CAZy]", "Carbohydrate Esterase [CAZy]",  "Carbon degradation",  "Carbon metabolism", "Chlorite reduction", "Fatty acid degradation", "Fermentation", "Glycoside Hydrolase [CAZy]", "GlycosylTransferase [CAZy]", "AOX degradation", "Hydrogen metabolism",  "Iron cycling", "Manganese cycling", "C1 metabolism", "Nitrogen cycling", "Polysaccharide Lyase [CAZy]", "Sulfur metabolism")
+```
+##PLOT
+```{r plot category abundances, warning=FALSE}
+Category_plot <- ggplot(category_abundances_sum2, aes(x = Abundance, y = reorder(variable, +W_value), fill = Forest)) +
+  geom_point(aes(size = W_value), color = "black", alpha = 1, shape = 21) +  # Black outline around points
+  geom_errorbar(aes(xmin = Abundance - SE, xmax = Abundance + SE, color = Forest), size = 1, width = 0.3) + #Colored by Forest
+  scale_fill_brewer(palette = "YlOrRd") +  # Fill color for points
+  scale_color_brewer(palette = "YlOrRd") +  # Color scale for error bars
+  scale_size_continuous(range = c(2, 10), guide = "none") + 
+  theme_bw(base_size = 20) +
+  xlab("Bias-corrected log abundance") +
+  theme(axis.text.x = element_text(colour = "black"),
+    axis.text.y = element_text(colour = "black", size = 15),
+    axis.title.x = element_text(colour = "black", size = 15),
+    axis.title.y = element_text(colour = "black", size = 15),
+    legend.position = "right") +
+  ylab("") +
+  labs(fill = "Forest", color = "Forest") 
+Category_plot <- Category_plot + guides(fill = guide_legend(override.aes = list(size=6)))
+```
+```{r export plot}
+png('~/Metagenomics/Manuscript/Figures/METABOLIC_categories.png', width = 6000, height = 5000, res = 500)
+Category_plot
+```
+##FUNCTION
+```{r}
+function_abundances <- as.data.frame(ancombc_function$bias_correct_log_table)
+function_abundances_DF <- cbind(Forests, t(function_abundances))
+
+##extract W-value
+function_category <- as.data.frame(tax_table(Functional_genes_FUNCTION)[,1])
+function_category <- as.data.frame(function_category[order(function_category$Phylum),])
+
+function_W_value <- ANCOM_FUNCTIONS[,1:2]
+function_W_value2 <- cbind(rep(function_category[,1], each=9),rep(function_W_value[,1], each=9), rep(function_W_value[,2], each=9))
+
+##melt dataframe
+function_abundances_m <- melt(function_abundances_DF)
+function_abundances_sum <- function_abundances_m %>%
+  dplyr::group_by(Forest, variable) %>%
+  dplyr::summarize(Abundance = mean(value), SD = sd(value), n = n(), SE = SD/sqrt(n))
+
+#add gene metadata
+function_abundances_sum <- function_abundances_sum[order(function_abundances_sum$variable),]
+function_abundances_sum <- cbind(function_W_value2, function_abundances_sum)
+colnames(function_abundances_sum) <- c("Category", "Function", "W_value","Forest", "variable",  "Abundance", "SD", "n", "SE")
+```
+```{r}
+levels(function_abundances_sum$Forest) <- c("Hirakimata", "Puketi", "Glenfern", "Windy Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara")
+function_abundances_sum$W_value <- as.numeric(function_abundances_sum$W_value)
+```
+```{r remove categories with only one level i.e. already been plotted}
+function_abundances_sum$Category <- as.factor(function_abundances_sum$Category)
+remove <- c("Halogenated compound degradation", "Aromatics degradation", "Arsenate cycling ", "Chlorite reduction", "Manganese oxidation", "Selenate reduction", "Fatty acid degradation", "Manganese cycling")
+function_abundances_sum <- function_abundances_sum[!function_abundances_sum$Category %in% remove , ]
+```
+```{r plot function abundances, warning=FALSE}
+function_plot <- ggplot(function_abundances_sum, aes(x = Abundance, y = reorder(variable, +W_value), fill = Forest)) +
+  geom_point(aes(size = W_value), color = "black", alpha = 1, shape = 21) +  # Black outline around points
+  geom_errorbar(aes(xmin = Abundance - SE, xmax = Abundance + SE, color = Forest), size = 1, width = 0.3) + #Colored by Forest
+  scale_fill_brewer(palette = "YlOrRd") +  # Fill color for points
+  scale_color_brewer(palette = "YlOrRd") +  # Color scale for error bars
+  scale_size_continuous(range = c(2, 10), guide = "none") + 
+  theme_bw(base_size = 20) +
+  xlab("Bias-corrected log abundance") +
+  theme(axis.text.x = element_text(colour = "black"),
+    axis.text.y = element_text(colour = "black", size = 15),
+    axis.title.x = element_text(colour = "black", size = 15),
+    axis.title.y = element_text(colour = "black", size = 15),
+    legend.position = "right") +
+  ylab("") +
+  labs(fill = "Forest", color = "Forest") 
+function_plot <- function_plot + guides(fill = guide_legend(override.aes = list(size=6)))
+```
+```{r}
+function_plot2 <- function_plot + facet_grid(rows = vars(Category), scales = "free", space = "free")+
+  theme(strip.background = element_blank(), strip.text = element_blank())
+```
+```{r}
+png('~/Metagenomics/Manuscript/Figures/METABOLIC_functions.png', width = 7500, height = 8000, res = 500)
+function_plot2
+```
+##GENES
+```{r}
+gene_abundances <- as.data.frame(ancombc_genes$bias_correct_log_table)
+gene_abundances_DF <- cbind(Forests, t(gene_abundances))
+
+##extract W-value
+gene_metadata <- as.data.frame(tax_table(Functional_genes_GLOM2)[,1])
+gene_metadata2 <- as.data.frame(taxa_names(Functional_genes_GLOM2))
+gene_metadata3 <- as.data.frame(tax_table(Functional_genes_GLOM2)[,2])
+gene_W_value <- ANCOM_GENES[,1:2]
+gene_W_value2 <- cbind(rep(gene_metadata[,1], each=9), rep(gene_metadata2[,1], each=9), rep(gene_metadata3[,1], each=9), rep(gene_W_value[,2], each=9))
+
+##melt dataframe
+gene_abundances_m <- melt(gene_abundances_DF)
+gene_abundances_sum <- gene_abundances_m %>%
+  dplyr::group_by(Forest, variable) %>%
+  dplyr::summarize(Abundance = mean(value, na.rm=FALSE), SD = sd(value), n = n(), SE = SD/sqrt(n))
+
+#add gene metadata
+gene_abundances_sum <- gene_abundances_sum[order(gene_abundances_sum$variable),]
+gene_abundances_sum <- cbind(gene_W_value2, gene_abundances_sum)
+colnames(gene_abundances_sum) <- c("Category","gene", "Function","W_value","Forest", "variable",  "Abundance", "SD", "n", "SE")
+```
+```{r}
+levels(gene_abundances_sum$Forest) <- c("Hirakimata", "Puketi", "Glenfern", "Windy Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara")
+gene_abundances_sum$W_value <- as.numeric(gene_abundances_sum$W_value)
+```
+
+##PLOT GENES AND SPLIT DATAFRAME ACCORDING TO GENE CATEGORY
+```{r}
+#split dataframe
+abundance_genes.split <- split(gene_abundances_sum, ~ Category)
+
+#remove variables not of interest
+keep_variables <- c("Carbon degradation", "Carbon metabolism", "Methane metabolism", "Nitrogen cycling", "Sulfur metabolism")
+abundance_genes.split2 <- abundance_genes.split[names(abundance_genes.split) %in% keep_variables == TRUE]
+```
+```{r plot genes, warning=FALSE}
+genes_plots <- lapply(names(abundance_genes.split2), function(name) {
+  x <- abundance_genes.split2[[name]]
+  ggplot(x, aes(x = Abundance, y = reorder(variable, +W_value), fill = Forest)) +
+    geom_point(aes(size = W_value), color = "black", alpha = 1, shape = 21) +
+    geom_errorbar(aes(xmin = Abundance - SE, xmax = Abundance + SE, color = Forest), size = 1, width = 0.3) +
+    scale_fill_brewer(palette = "YlOrRd") +
+    scale_color_brewer(palette = "YlOrRd") +
+    scale_size_continuous(range = c(2, 10), guide = "none") + 
+    theme_bw(base_size = 20) +
+    xlab("Bias-adjusted log abundance") +
+    theme(axis.text.x = element_text(colour = "black", size = 15),
+          axis.text.y = element_text(colour = "black"),
+          axis.title.x = element_text(colour = "black"),
+          axis.title.y = element_text(colour = "black"),
+          legend.position = "right",
+          plot.title = element_text(size = 20)) +
+    ylab("") +
+    labs(fill = "Forest", color = "Forest") +
+    #scale_y_discrete(limits = rev) +
+    ggtitle(name) +  # Use the list name as the title
+    guides(fill = guide_legend(override.aes = list(size = 6)))
+})
+```
+```{r combine C and N genes and export}
+C_plot <- genes_plots[[1]] + labs(title = "A) C degradation genes") + theme(axis.title.x = element_blank())
+N_plot <- genes_plots[[4]] + labs(title = "B) N cycling genes")
+CN_plot <- ggarrange(C_plot, N_plot, common.legend = TRUE, legend = "right", align = "v", ncol = 1, heights = c(2,1.2))
+```
+```{r export C and N genes}
+png('~/Metagenomics/Manuscript/Figures/CN_genes.png', width = 6500, height = 8000, res = 500)
+CN_plot
+```
+##export C metabolism, S metabolism, and methane metabolism plots for supplementary materials
+```{r}
+S_plot <- genes_plots[[5]] + labs(title = "Sulfur metabolism genes")
+png('~/Metagenomics/Manuscript/Figures/S_plot.png', width = 5000, height = 6000, res = 500)
+S_plot
+```
+```{r}
+Methane_plot <- genes_plots[[3]] + labs(title = "Methane metabolism genes")
+png('~/Metagenomics/Manuscript/Figures/Methane_plot.png', width = 4500, height = 4000, res = 500)
+Methane_plot
+```
+```{r redo C met plot to filter genes with low W values}
+C_met_plot <- ggplot(subset(abundance_genes.split2$`Carbon metabolism`, W_value > 70), aes(x = Abundance, y = reorder(variable, +W_value), fill = Forest)) +
+  geom_point(aes(size = W_value), color = "black", alpha = 1, shape = 21) +  # Black outline around points
+  geom_errorbar(aes(xmin = Abundance - SE, xmax = Abundance + SE, color = Forest), size = 1, width = 0.3) + #Colored by Forest
+  scale_fill_brewer(palette = "YlOrRd") +  # Fill color for points
+  scale_color_brewer(palette = "YlOrRd") +  # Color scale for error bars
+  scale_size_continuous(range = c(2, 10), guide = "none") + 
+  theme_bw(base_size = 20) +
+  xlab("Bias-corrected log abundance") +
+  theme(axis.text.x = element_text(colour = "black"),
+    axis.text.y = element_text(colour = "black", size = 15),
+    axis.title.x = element_text(colour = "black", size = 15),
+    axis.title.y = element_text(colour = "black", size = 15),
+    legend.position = "right") +
+  ylab("") +
+  labs(fill = "Forest", color = "Forest") 
+C_met_plot <- C_met_plot + guides(fill = guide_legend(override.aes = list(size=6)))+ labs(title = "Carbon metabolism genes")
+png('~/Metagenomics/Manuscript/Figures/C_met_plot.png', width = 7500, height = 8500, res = 500)
+C_met_plot
+```
+##CAZY GENE FAMILIES
+```{r}
+cazy_abundances <- as.data.frame(ancombc_CAZy$bias_correct_log_table)
+cazy_abundances_DF <- cbind(Forests, t(cazy_abundances))
+
+##extract W-value
+cazy_EC.df <- as.data.frame(tax_table(CAZy_ps2)[,1])
+cazy_EC.df <- as.data.frame(cazy_EC.df[order(cazy_EC.df$Phylum),])
+
+cazy_W_value <- ANCOM_CAZY[,1:2]
+cazy_W_value2 <- cbind(rep(cazy_EC.df[,1], each=9),rep(cazy_W_value[,1], each=9), rep(cazy_W_value[,2], each=9))
+
+##melt dataframe
+cazy_abundances_m <- melt(cazy_abundances_DF)
+cazy_abundances_sum <- cazy_abundances_m %>%
+  dplyr::group_by(Forest, variable) %>%
+  dplyr::summarize(Abundance = mean(value), SD = sd(value), n = n(), SE = SD/sqrt(n))
+
+#add gene metadata
+cazy_abundances_sum <- cazy_abundances_sum[order(cazy_abundances_sum$variable),]
+cazy_abundances_sum <- cbind(cazy_W_value2, cazy_abundances_sum)
+colnames(cazy_abundances_sum) <- c("Enzyme Class", "Gene Family", "W_value","Forest", "variable",  "Abundance", "SD", "n", "SE")
+```
+```{r}
+levels(cazy_abundances_sum$Forest) <- c("Hirakimata", "Puketi", "Glenfern", "Windy Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara")
+cazy_abundances_sum$W_value <- as.numeric(cazy_abundances_sum$W_value)
+```
+```{r plot cazy abundances, warning=FALSE}
+cazy_plot <- ggplot(subset(cazy_abundances_sum, W_value  > 45), aes(x = Abundance, y = reorder(variable, +W_value), fill = Forest)) +
+  geom_point(aes(size = W_value), color = "black", alpha = 1, shape = 21) +  # Black outline around points
+  geom_errorbar(aes(xmin = Abundance - SE, xmax = Abundance + SE, color = Forest), size = 1, width = 0.3) + #Colored by Forest
+  scale_fill_brewer(palette = "YlOrRd") +  # Fill color for points
+  scale_color_brewer(palette = "YlOrRd") +  # Color scale for error bars
+  scale_size_continuous(range = c(2, 10), guide = "none") + 
+  theme_bw(base_size = 20) +
+  xlab("Bias-corrected log abundance") +
+  theme(axis.text.x = element_text(colour = "black"),
+    axis.text.y = element_text(colour = "black", size = 15),
+    axis.title.x = element_text(colour = "black", size = 15),
+    axis.title.y = element_text(colour = "black", size = 15),
+    legend.position = "right") +
+  ylab("") +
+  labs(fill = "Forest", color = "Forest") 
+cazy_plot <- cazy_plot + guides(fill = guide_legend(override.aes = list(size=6)))
+```
+```{r}
+cazy_plot2 <- cazy_plot + facet_grid(rows = vars(`Enzyme Class`), scales = "free", space = "free")+
+  theme(strip.background = element_blank(), strip.text = element_blank())
+```
+```{r}
+png('~/Metagenomics/Manuscript/Figures/METABOLIC_cazys.png', width = 7500, height = 8500, res = 500)
+cazy_plot2
+```
+##BACTERIAL GENERA
+```{r import dataset of bacterial orders, classes and families}
+bacterial_taxonomy <- read.csv("~/Metagenomics/Kraken/bacterial_genera_taxonomy.csv")
+bacterial_taxonomy_DF <- cbind(rep(bacterial_taxonomy[,1], each=9), rep(bacterial_taxonomy[,2], each=9), rep(bacterial_taxonomy[,3], each=9))
+```
+```{r}
+genus_abundances <- as.data.frame(ancombc_genus$bias_correct_log_table)
+genus_abundances_DF <- cbind(Forests, t(genus_abundances))
+
+##extract W-value
+genus_W_value <- ANCOM_BACTERIA[,1:2]
+genus_W_value2 <- cbind(rep(genus_W_value[,1], each=9), rep(genus_W_value[,2], each=9))
+genus_W_value2 <- cbind(bacterial_taxonomy_DF, genus_W_value2)
+
+##melt dataframe
+genus_abundances_m <- melt(genus_abundances_DF)
+genus_abundances_sum <- genus_abundances_m %>%
+  dplyr::group_by(Forest, variable) %>%
+  dplyr::summarize(Abundance = mean(value), SD = sd(value), n = n(), SE = SD/sqrt(n))
+
+#add gene metadata
+genus_abundances_sum <- genus_abundances_sum[order(genus_abundances_sum$variable),]
+genus_abundances_sum <- cbind(genus_W_value2, genus_abundances_sum)
+colnames(genus_abundances_sum) <- c("Class", "Order","Family", "genus", "W_value","Forest", "variable",  "Abundance", "SD", "n", "SE")
+```
+```{r}
+levels(genus_abundances_sum$Forest) <- c("Hirakimata", "Puketi", "Glenfern", "Windy Hill", "Laingholm", "Silverdale", "Gadgil",  "Oratia", "Kaiaraara")
+genus_abundances_sum$W_value <- as.numeric(genus_abundances_sum$W_value)
+genus_abundances_sum$Class <- as.factor(genus_abundances_sum$Class)
+```
+```{r plot genus abundances, warning=FALSE}
+genus_plot <- ggplot(genus_abundances_sum, aes(x = Abundance, y = reorder(variable, +W_value), fill = Forest)) +
+  geom_point(aes(size = W_value), color = "black", alpha = 1, shape = 21) +  # Black outline around points
+  geom_errorbar(aes(xmin = Abundance - SE, xmax = Abundance + SE, color = Forest), size = 1, width = 0.3) + #Colored by Forest
+  scale_fill_brewer(palette = "YlOrRd") +  # Fill color for points
+  scale_color_brewer(palette = "YlOrRd") +  # Color scale for error bars
+  scale_size_continuous(range = c(2, 10), guide = "none") + 
+  theme_bw(base_size = 20) +
+  xlab("Bias-corrected log abundance") +
+  theme(axis.text.x = element_text(colour = "black"),
+    axis.text.y = element_text(colour = "black", size = 12),
+    axis.title.x = element_text(colour = "black", size = 15),
+    axis.title.y = element_text(colour = "black", size = 15),
+    legend.position = "right") +
+  ylab("") +
+  labs(fill = "Forest", color = "Forest") +
+  ggforce::facet_col(facets = vars(Class), scales = "free_y", space = "free") +
+  theme(strip.text.y = element_text(angle=0), strip.text = element_text(size = 12))
+genus_plot <- genus_plot + guides(fill = guide_legend(override.aes = list(size=6)))
+```
+```{r}
+png('~/Metagenomics/Manuscript/Figures/Bacterial_genera.png', width = 6500, height = 8000, res = 500)
+genus_plot
+```
