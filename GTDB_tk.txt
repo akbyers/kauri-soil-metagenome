@@ -1,0 +1,11 @@
+#Run GTDB-Tk to identify taxonomic origin of MAGs
+
+# Load modules
+module purge
+module load GTDB-Tk/2.4.0-foss-2023a-Python-3.11.6
+
+#Set directory
+cd [change to your directory]
+mkdir gtdb_tk
+
+gtdbtk classify_wf -x fa --cpus 12 --keep_intermediates --genome_dir deReplicated_FINAL_BINS/deReplicated_contigs/ --out_dir gtdbtk_out/ --skip_ani_screen
