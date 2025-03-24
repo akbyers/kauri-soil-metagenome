@@ -1,0 +1,22 @@
+#Normalising gene coverage values by library size
+
+#Working directory
+cd [your working directory]/bin_coverage
+
+#Step 1: normalise coverage values by bam library size
+module purge
+module load SAMtools/1.15.1-GCC-11.3.0
+
+#obtain library size information
+for i in *.bam; do
+  filename=$(basename $i)
+  libsize=$(($(samtools flagstat $i | head -n 1 | cut -f 1 -d ' ')/2))
+  printf "%s\t%d\n" $filename $libsize >> libsize.txt
+done
+
+#Step 2: normalize and scale coverage using the "normalise_jgi_cov.r" script
+module purge
+module load R/4.2.1-gimkl-2022a
+
+./scripts/normalise_jgi_cov.r bins_cov_table.txt libsize.txt
+
