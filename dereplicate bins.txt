@@ -1,0 +1,46 @@
+##Dereplicating bins using dRep and dedupe.sh
+
+#Preparation: Pull the bins from all assemblies together into a single folder
+cd ~/MGS_RDF/CO_ASSEMBLY
+mkdir deReplicated_FINAL_BINS
+
+#Oratia (example, repeat for all forests)
+cd /scale_wlg_nobackup/filesets/nobackup/lincoln03750/MGS_RDF/CO_ASSEMBLY/Binning/Oratia/FINAL_BINS/
+for file in *; do cp ${file} Ora_${file}; done #rename bin to append site ID
+mv Ora_*.fa /scale_wlg_nobackup/filesets/nobackup/lincoln03750/MGS_RDF/CO_ASSEMBLY/deReplicated_FINAL_BINS
+
+# Step 1: first run checkm2 to assess genome completeness and contamination
+module purge
+module load CheckM2/1.0.1-Miniconda3
+
+checkm2 predict -t 12 -x .fa --input deReplicated_FINAL_BINS --output-directory deReplicated_FINAL_BINS/CheckM2
+
+
+# Step 2: produce genome info file for dRep 
+echo "Name,Completeness, Contamination" > dRep.genomeInfo
+cut -f1,2,3 quality_report.tsv \
+  | sed 's/\t/.fa\t/' \
+  | sed 's/\t/,/g' \
+  | tail -n+2 >> dRep.genomeInfo
+
+# Step 3: run dRep
+module purge
+module load drep/3.4.2-gimkl-2022a-Python-3.10.5
+
+dRep dereplicate --genomeInfo dRep.genomeInfo \
+                 -g ../all_bins/*.fa \
+                 -p $SLURM_CPUS_PER_TASK \
+                 deReplicated_bins/
+
+# Step 4: dereplicate contigs using dedupe
+# Load modules
+module purge
+module load BBMap/39.01-GCC-11.3.0 
+
+for i in deReplicated_bins/*.fa; do 
+ dedupe.sh in=${i} out=deReplicated_contigs/${i}
+done
+
+##FINAL BIN SET FOR GENOME ANNOTATION ARE IN deReplicated_contigs/ FOLDER
+
+
