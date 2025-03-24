@@ -1,0 +1,78 @@
+##Calculating bacterial growth rate and average genome size (preparing inputs for gRodon models in R)
+##Script was written using material from Osburn, E.D., et al. Global patterns in the growth potential of soil bacterial communities. Nat Commun 15, 6881 (2024). https://doi.org/10.1038/s41467-024-50382-1
+##Running example through one sample only ("Ora_10"), repeat same code for all samples
+
+#STEP 1: ASSIGN TAXONOMY TO METAGENOMICS READS USING KRAKEN
+cd [your directory]/raw_data
+mkdir k2_reports k2_outputs
+
+#Load modules
+module purge
+module load Kraken2/2.1.3-GCC-11.3.0
+
+#Classify reads with kraken2
+kraken2 --use-names --paired Ora_10_1.fastq Ora_10_2.fastq --threads 5 --db /opt/nesi/db/Kraken2/standard-2018-09 --report k2_reports/Ora_10_report.kraken --output k2_outputs/Ora_10.kraken --report-zero-counts 
+
+#STEP 2: FILTER KRAKEN OUTPUTS TO INCLUDE ONLY BACTERIAL DNA
+#Load modules
+module purge
+module load Python/2.7.18-gimkl-2020a
+
+cd [your directory]/raw_data
+mkdir kraken_filtered
+
+python extract_kraken_reads.py -k k2_outputs/Ora_10.kraken -r k2_reports/Ora_10_report.kraken -s1 Ora_10_1.fastq -s2 Ora_10_2.fastq -o kraken_filtered/Ora_10_filt_1.fastq -o2 kraken_filtered/Ora_10_filt_2.fastq --taxid 2 --include-children --fastq-output
+
+#STEP 3: GENOME ASSEMBLY USING MEGAHIT
+cd [your directory]
+mkdir metagenome_assembly
+
+#load modules
+module purge
+module load MEGAHIT/1.2.9-gimkl-2022a-Python-3.10.5
+
+#Assemble filtered metagenomic reads into contigs using megahit
+megahit -1 kraken_filtered/Ora_10_filt_1.fastq -2 kraken_filtered/Ora_10_filt_2.fastq -t 20 --k-list 21,29,39,59,79 --min-contig-len 400 -o metagenome_assembly/Ora_10
+
+#STEP 4: GENE PREDICTION USING PRODIGAL
+cd [your directory]
+mkdir gene_prediction
+
+#load modules
+module purge
+module load prodigal/2.6.3-GCCcore-7.4.0
+
+#Run prodigal
+prodigal -i metagenome_assembly/Ora_10/final.contigs.fa -d gene_prediction/Ora_10_prodigal_genes.fna -p meta  ##.fna file is output for gRodon model
+
+#STEP 5: IDENTIFY RIBOSOMAL PROTEINS USING BLAST
+module purge
+module load BLAST/2.16.0-GCC-12.3.0
+
+makeblastdb -in ribosomal_proteins_db.fasta -dbtype nucl #make BLAST database
+blastn -db ribosomal_proteins_db.fasta -query gene_prediction/Ora_10_prodigal_genes.fna -outfmt 6 -evalue 1e-15 -out gene_prediction/Ora_10_ribosomal_proteins.blast -num_threads 5 -max_hsps 1 -max_target_seqs 1  ##.blast file is input file for gRodon model
+
+#STEP 6: CALCULATE GENE COVERAGE
+cd [your directory]
+mkdir gene_coverage
+
+#load modules
+module purge
+module load BWA/0.7.18-GCC-12.3.0 SAMtools/1.19-GCC-12.3.0
+
+#Index prodigal files
+bwa index Ora_10_prodigal_genes.fna
+bwa mem -t 20 gene_prediction/Ora_10_prodigal_genes.fna kraken_filtered/Ora_10_filt_1.fq kraken_filtered/Ora_10_filt_2.fq > gene_coverage/Ora_10_gene_coverages.sam
+samtools sort -@ 20 Ora_10_gene_coverages.sam -o Ora_10_gene_coverages.bam
+samtools coverage Ora_10_gene_coverages.bam Ora_10_gene_coverage.txt  ##.txt file is input file for gRodon model
+
+#STEP 7: CALCULATE AVERAGE GENOME SIZE USING MICROBE CENSUS
+# Load modules
+module purge 
+module load Python/3.11.6-foss-2023a
+source /nesi/project/lincoln03750/software/MicrobeCensus-SourceApp/bin/activate
+
+cd [your directory]/MicrobeCensus/
+
+#Run microbe census
+run_microbe_census.py -t 12 -n 100000000 -v /raw_data/kraken_filtered/Ora_10_filt_1.fastq,/raw_data/kraken_filtered/Ora_10_filt_2.fastq /CO_ASSEMBLY/MicrobeCensus/Ora_10.txt
