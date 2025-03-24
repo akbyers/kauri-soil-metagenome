@@ -5,14 +5,14 @@ cd [your working directory]
 mkdir bin_coverage
 
 #Step 1: Concat all MAGS into single fasta file
-cat deReplicated_FINAL_BINS/deRep_output/*_.fa > deReplicated_FINAL_BINS/deRep_output/concatenated_MAGs.fasta
+cat deReplicated_FINAL_BINS/deReplicated_contigs/*_.fa > deReplicated_FINAL_BINS/deReplicated_contigs/concatenated_MAGs.fasta
 
 #Step 2: remove duplicate reads using dedupe.sh script
 # Load modules
 module purge
 module load BBMap/39.01-GCC-11.3.0
 
-dedupe.sh in=deReplicated_FINAL_BINS/deRep_output/concatenated_MAGs.fasta out=deReplicated_FINAL_BINS/deRep_output/DEDUPE_concatenated_MAGs.fasta
+dedupe.sh in=deReplicated_FINAL_BINS/deReplicated_contigs/concatenated_MAGs.fasta out=deReplicated_FINAL_BINS/deReplicated_contigs/DEDUPE_concatenated_MAGs.fasta
 
 #Step 3: build the index for Bowtie2
 module purge
@@ -20,7 +20,7 @@ module load Bowtie2/2.4.5-GCC-11.3.0
 module load SAMtools/1.15.1-GCC-11.3.0
 
 #Build bowtie index
-bowtie2-build deReplicated_FINAL_BINS/deRep_output/DEDUPE_concatenated_MAGs.fasta bin_coverage/bw_bins
+bowtie2-build deReplicated_FINAL_BINS/deReplicated_contigs/DEDUPE_concatenated_MAGs.fasta bin_coverage/bw_bins
 
 #Step 4: Run Bowtie2 to map paired end metagenomic reads back to index of concatenated bins
 #GLENFERN
